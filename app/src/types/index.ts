@@ -64,8 +64,13 @@ export interface Room {
     ac: boolean;
     privateBathroom: boolean;
     balcony: boolean;
-    window: boolean;
+    tv: boolean;
+    refrigerator: boolean;
+    wardrobe: boolean;
+    desk: boolean;
+    wifi: boolean;
   };
+  description?: string;
   status: RoomStatus;
   acUnitId?: string;
   coordinatesX?: number;
