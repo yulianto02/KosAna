@@ -41,18 +41,18 @@ export function Rooms() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Form state
+  // Form state - using snake_case to match PostgreSQL/types
   const [formData, setFormData] = useState({
-    propertyId: '',
-    roomNumber: '',
+    property_id: '',
+    room_number: '',
     floor: 1,
-    roomType: 'standard',
-    baseMonthlyRent: 0,
-    occupancyType: 'single',
-    sizeSqm: 0,
+    room_type: 'standard',
+    base_monthly_rent: 0,
+    occupancy_type: 'single',
+    size_sqm: 0,
     amenities: {
       ac: false,
-      privateBathroom: false,
+      private_bathroom: false,
       balcony: false,
       tv: false,
       refrigerator: false,
@@ -90,37 +90,47 @@ export function Rooms() {
     }
   };
 
-  // Filter rooms
-  const filteredRooms = rooms.filter(room => {
-    const matchesProperty = room.propertyId === selectedProperty;
-    const matchesFloor = room.floor === selectedFloor;
-    const matchesSearch = room.roomNumber.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesProperty && matchesFloor && matchesSearch;
-  });
+  // Helper: Get active tenant for a room
+  const getRoomTenant = (roomId: string) => {
+    return tenants.find(t => t.room_id === roomId && t.status === 'active');
+  };
+
+  // ✅ FIXED: Filter + Sort + Effective Status Logic
+  const filteredAndSortedRooms = rooms
+    .filter(room => {
+      const matchesProperty = room.property_id === selectedProperty;
+      const matchesFloor = room.floor === selectedFloor;
+      const roomNumberStr = (room.room_number || '').toLowerCase();
+      const matchesSearch = roomNumberStr.includes(searchQuery.toLowerCase());
+      return matchesProperty && matchesFloor && matchesSearch;
+    })
+    .sort((a, b) => {
+      const numA = parseInt(a.room_number);
+      const numB = parseInt(b.room_number);
+      if (!isNaN(numA) && !isNaN(numB)) {
+        return numA - numB;
+      }
+      return (a.room_number || '').localeCompare(b.room_number || '');
+    });
 
   // Get property floors
   const propertyFloors = Array.from(
-    new Set(rooms.filter(r => r.propertyId === selectedProperty).map(r => r.floor))
+    new Set(rooms.filter(r => r.property_id === selectedProperty).map(r => r.floor))
   ).sort((a, b) => a - b);
-
-  // Get room tenant
-  const getRoomTenant = (roomId: string) => {
-    return tenants.find(t => t.roomId === roomId && t.status === 'active');
-  };
 
   // Reset form
   const resetForm = () => {
     setFormData({
-      propertyId: selectedProperty,
-      roomNumber: '',
+      property_id: selectedProperty,
+      room_number: '',
       floor: selectedFloor,
-      roomType: 'standard',
-      baseMonthlyRent: 0,
-      occupancyType: 'single',
-      sizeSqm: 0,
+      room_type: 'standard',
+      base_monthly_rent: 0,
+      occupancy_type: 'single',
+      size_sqm: 0,
       amenities: {
         ac: false,
-        privateBathroom: false,
+        private_bathroom: false,
         balcony: false,
         tv: false,
         refrigerator: false,
@@ -180,16 +190,16 @@ export function Rooms() {
   const openEditDialog = (room: Room) => {
     setSelectedRoom(room);
     setFormData({
-      propertyId: room.propertyId,
-      roomNumber: room.roomNumber,
+      property_id: room.property_id,
+      room_number: room.room_number,
       floor: room.floor,
-      roomType: room.roomType,
-      baseMonthlyRent: room.baseMonthlyRent,
-      occupancyType: room.occupancyType,
-      sizeSqm: room.sizeSqm || 0,
+      room_type: room.room_type,
+      base_monthly_rent: room.base_monthly_rent,
+      occupancy_type: room.occupancy_type,
+      size_sqm: room.size_sqm || 0,
       amenities: {
         ac: room.amenities?.ac || false,
-        privateBathroom: room.amenities?.privateBathroom || false,
+        private_bathroom: room.amenities?.private_bathroom || false,
         balcony: room.amenities?.balcony || false,
         tv: room.amenities?.tv || false,
         refrigerator: room.amenities?.refrigerator || false,
@@ -221,7 +231,7 @@ export function Rooms() {
           className="bg-[#1A3D5C] hover:bg-[#0F2744]" 
           onClick={() => {
             resetForm();
-            setFormData(prev => ({ ...prev, propertyId: selectedProperty }));
+            setFormData(prev => ({ ...prev, property_id: selectedProperty }));
             setIsAddDialogOpen(true);
           }}
         >
@@ -333,52 +343,49 @@ export function Rooms() {
         </div>
       )}
 
-      {/* Rooms Grid View */}
+      {/* ✅ Grid View with effectiveStatus */}
       {!isLoading && viewMode === 'grid' && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {filteredRooms.map((room) => {
+          {filteredAndSortedRooms.map((room) => {
             const tenant = getRoomTenant(room.id);
-            
+            const effectiveStatus = tenant ? 'occupied' : room.status;
+
             return (
               <Card 
                 key={room.id} 
                 className={cn(
-                  "cursor-pointer hover:shadow-lg transition-all",
-                  "border-2",
-                  room.status === 'occupied' && "border-blue-200",
-                  room.status === 'available' && "border-green-200",
-                  room.status === 'reserved' && "border-yellow-200",
-                  room.status === 'maintenance' && "border-red-200",
+                  "cursor-pointer hover:shadow-lg transition-all border-2",
+                  effectiveStatus === 'occupied' && "border-blue-200",
+                  effectiveStatus === 'available' && "border-green-200",
+                  effectiveStatus === 'reserved' && "border-yellow-200",
+                  effectiveStatus === 'maintenance' && "border-red-200",
                 )}
                 onClick={() => setSelectedRoom(room)}
               >
                 <CardContent className="p-4">
-                  {/* Room Number & Status */}
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-lg font-bold text-gray-900">{room.roomNumber}</span>
-                    <div className={cn("w-3 h-3 rounded-full", getRoomStatusColor(room.status))} />
+                    <span className="text-lg font-bold text-gray-900">{room.room_number}</span>
+                    <div className={cn("w-3 h-3 rounded-full", getRoomStatusColor(effectiveStatus))} />
                   </div>
 
-                  {/* Room Photo Placeholder */}
                   <div className="h-24 bg-gray-100 rounded-lg mb-3 overflow-hidden">
                     <div className="w-full h-full flex items-center justify-center text-gray-400">
                       <ImageIcon className="w-8 h-8" />
                     </div>
                   </div>
 
-                  {/* Room Info */}
                   <div className="space-y-1">
                     <p className="text-sm font-medium text-gray-900">
-                      {formatCurrency(room.baseMonthlyRent)}/bulan
+                      {formatCurrency(room.base_monthly_rent)}/bulan
                     </p>
                     <p className="text-xs text-gray-500">
-                      {room.roomType === 'standard' ? 'Standar' : room.roomType === 'deluxe' ? 'Deluxe' : 'Premium'}
-                      {room.occupancyType === 'double' && ' (Bersama)'}
+                      {room.room_type === 'standard' ? 'Standar' : room.room_type === 'deluxe' ? 'Deluxe' : 'Premium'}
+                      {room.occupancy_type === 'double' && ' (Bersama)'}
                     </p>
                     {tenant ? (
                       <div className="flex items-center gap-1 text-xs text-blue-600">
                         <Users className="w-3 h-3" />
-                        <span className="truncate">{tenant.fullName}</span>
+                        <span className="truncate">{tenant.full_name}</span>
                       </div>
                     ) : (
                       <p className="text-xs text-green-600">Tersedia</p>
@@ -391,7 +398,7 @@ export function Rooms() {
         </div>
       )}
 
-      {/* Rooms List View */}
+      {/* ✅ List View with effectiveStatus */}
       {!isLoading && viewMode === 'list' && (
         <Card>
           <div className="overflow-x-auto">
@@ -408,32 +415,34 @@ export function Rooms() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {filteredRooms.map((room) => {
+                {filteredAndSortedRooms.map((room) => {
                   const tenant = getRoomTenant(room.id);
+                  const effectiveStatus = tenant ? 'occupied' : room.status;
+
                   return (
                     <tr key={room.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
-                        <span className="font-medium text-gray-900">{room.roomNumber}</span>
+                        <span className="font-medium text-gray-900">{room.room_number}</span>
                         <p className="text-xs text-gray-500">Lantai {room.floor}</p>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="capitalize">{room.roomType}</span>
-                        {room.occupancyType === 'double' && (
+                        <span className="capitalize">{room.room_type}</span>
+                        {room.occupancy_type === 'double' && (
                           <Badge variant="outline" className="ml-2 text-xs">Bersama</Badge>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {formatCurrency(room.baseMonthlyRent)}
+                        {formatCurrency(room.base_monthly_rent)}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge className={cn("text-white", getRoomStatusColor(room.status))}>
-                          {getRoomStatusLabel(room.status)}
+                        <Badge className={cn("text-white", getRoomStatusColor(effectiveStatus))}>
+                          {getRoomStatusLabel(effectiveStatus)}
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
                         {tenant ? (
                           <div>
-                            <p className="text-sm">{tenant.fullName}</p>
+                            <p className="text-sm">{tenant.full_name}</p>
                             <p className="text-xs text-gray-500">{tenant.phone}</p>
                           </div>
                         ) : (
@@ -443,7 +452,7 @@ export function Rooms() {
                       <td className="px-4 py-3">
                         <div className="flex gap-1 flex-wrap">
                           {room.amenities.ac && <Badge variant="outline" className="text-xs">AC</Badge>}
-                          {room.amenities.privateBathroom && <Badge variant="outline" className="text-xs">KM</Badge>}
+                          {room.amenities.private_bathroom && <Badge variant="outline" className="text-xs">KM</Badge>}
                           {room.amenities.balcony && <Badge variant="outline" className="text-xs">Balkon</Badge>}
                           {room.amenities.tv && <Badge variant="outline" className="text-xs">TV</Badge>}
                           {room.amenities.wifi && <Badge variant="outline" className="text-xs">WiFi</Badge>}
@@ -481,7 +490,7 @@ export function Rooms() {
       )}
 
       {/* Empty State */}
-      {!isLoading && filteredRooms.length === 0 && (
+      {!isLoading && filteredAndSortedRooms.length === 0 && (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
           <p className="text-gray-500">Tidak ada kamar ditemukan</p>
           <Button 
@@ -501,44 +510,49 @@ export function Rooms() {
           {selectedRoom && (
             <>
               <DialogHeader>
-                <DialogTitle>Kamar {selectedRoom.roomNumber}</DialogTitle>
+                <DialogTitle>Kamar {selectedRoom.room_number}</DialogTitle>
                 <DialogDescription>
                   Detail informasi kamar
                 </DialogDescription>
               </DialogHeader>
 
               <div className="grid grid-cols-2 gap-6">
-                {/* Room Info */}
                 <div className="space-y-4">
                   <div>
                     <Label className="text-gray-500">Status</Label>
-                    <Badge className={cn("text-white mt-1", getRoomStatusColor(selectedRoom.status))}>
-                      {getRoomStatusLabel(selectedRoom.status)}
-                    </Badge>
+                    {/* ✅ Use effectiveStatus in detail dialog too */}
+                    {(() => {
+                      const tenant = getRoomTenant(selectedRoom.id);
+                      const effectiveStatus = tenant ? 'occupied' : selectedRoom.status;
+                      return (
+                        <Badge className={cn("text-white mt-1", getRoomStatusColor(effectiveStatus))}>
+                          {getRoomStatusLabel(effectiveStatus)}
+                        </Badge>
+                      );
+                    })()}
                   </div>
                   <div>
                     <Label className="text-gray-500">Tipe Kamar</Label>
-                    <p className="font-medium capitalize">{selectedRoom.roomType}</p>
+                    <p className="font-medium capitalize">{selectedRoom.room_type}</p>
                   </div>
                   <div>
                     <Label className="text-gray-500">Harga per Bulan</Label>
-                    <p className="font-medium">{formatCurrency(selectedRoom.baseMonthlyRent)}</p>
+                    <p className="font-medium">{formatCurrency(selectedRoom.base_monthly_rent)}</p>
                   </div>
                   <div>
                     <Label className="text-gray-500">Tipe Okupansi</Label>
                     <p className="font-medium">
-                      {selectedRoom.occupancyType === 'single' ? 'Single' : 'Bersama (2 orang)'}
+                      {selectedRoom.occupancy_type === 'single' ? 'Single' : 'Bersama (2 orang)'}
                     </p>
                   </div>
-                  {selectedRoom.sizeSqm ? (
+                  {selectedRoom.size_sqm ? (
                     <div>
                       <Label className="text-gray-500">Ukuran</Label>
-                      <p className="font-medium">{selectedRoom.sizeSqm} m²</p>
+                      <p className="font-medium">{selectedRoom.size_sqm} m²</p>
                     </div>
                   ) : null}
                 </div>
 
-                {/* Amenities */}
                 <div>
                   <h4 className="font-semibold mb-2">Fasilitas</h4>
                   <div className="flex flex-wrap gap-2">
@@ -546,7 +560,7 @@ export function Rooms() {
                       value && (
                         <Badge key={key} variant="outline">
                           {key === 'ac' && 'AC'}
-                          {key === 'privateBathroom' && 'Kamar Mandi Dalam'}
+                          {key === 'private_bathroom' && 'Kamar Mandi Dalam'}
                           {key === 'balcony' && 'Balkon'}
                           {key === 'tv' && 'TV'}
                           {key === 'refrigerator' && 'Kulkas'}
@@ -566,7 +580,6 @@ export function Rooms() {
                 </div>
               </div>
 
-              {/* Current Tenant */}
               {getRoomTenant(selectedRoom.id) && (
                 <div className="border-t pt-4">
                   <h4 className="font-semibold mb-2">Penghuni Saat Ini</h4>
@@ -574,10 +587,10 @@ export function Rooms() {
                     const tenant = getRoomTenant(selectedRoom.id)!;
                     return (
                       <div className="bg-gray-50 p-4 rounded-lg">
-                        <p className="font-medium">{tenant.fullName}</p>
+                        <p className="font-medium">{tenant.full_name}</p>
                         <p className="text-sm text-gray-500">{tenant.phone}</p>
                         <p className="text-sm text-gray-500">
-                          Check-in: {new Date(tenant.checkInDate).toLocaleDateString('id-ID')}
+                          Check-in: {new Date(tenant.check_in_date).toLocaleDateString('id-ID')}
                         </p>
                       </div>
                     );
@@ -625,8 +638,8 @@ export function Rooms() {
                 <Label htmlFor="property">Properti</Label>
                 <select
                   id="property"
-                  value={formData.propertyId}
-                  onChange={(e) => setFormData({ ...formData, propertyId: e.target.value })}
+                  value={formData.property_id}
+                  onChange={(e) => setFormData({ ...formData, property_id: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                   required
                 >
@@ -637,11 +650,11 @@ export function Rooms() {
                 </select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="roomNumber">Nomor Kamar</Label>
+                <Label htmlFor="room_number">Nomor Kamar</Label>
                 <Input
-                  id="roomNumber"
-                  value={formData.roomNumber}
-                  onChange={(e) => setFormData({ ...formData, roomNumber: e.target.value })}
+                  id="room_number"
+                  value={formData.room_number}
+                  onChange={(e) => setFormData({ ...formData, room_number: e.target.value })}
                   placeholder="Contoh: 101"
                   required
                 />
@@ -660,23 +673,23 @@ export function Rooms() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="sizeSqm">Ukuran (m²)</Label>
+                <Label htmlFor="size_sqm">Ukuran (m²)</Label>
                 <Input
-                  id="sizeSqm"
+                  id="size_sqm"
                   type="number"
-                  value={formData.sizeSqm}
-                  onChange={(e) => setFormData({ ...formData, sizeSqm: parseInt(e.target.value) })}
+                  value={formData.size_sqm}
+                  onChange={(e) => setFormData({ ...formData, size_sqm: parseInt(e.target.value) })}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="roomType">Tipe Kamar</Label>
+                <Label htmlFor="room_type">Tipe Kamar</Label>
                 <select
-                  id="roomType"
-                  value={formData.roomType}
-                  onChange={(e) => setFormData({ ...formData, roomType: e.target.value })}
+                  id="room_type"
+                  value={formData.room_type}
+                  onChange={(e) => setFormData({ ...formData, room_type: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                   required
                 >
@@ -686,11 +699,11 @@ export function Rooms() {
                 </select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="occupancyType">Tipe Okupansi</Label>
+                <Label htmlFor="occupancy_type">Tipe Okupansi</Label>
                 <select
-                  id="occupancyType"
-                  value={formData.occupancyType}
-                  onChange={(e) => setFormData({ ...formData, occupancyType: e.target.value })}
+                  id="occupancy_type"
+                  value={formData.occupancy_type}
+                  onChange={(e) => setFormData({ ...formData, occupancy_type: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                   required
                 >
@@ -701,12 +714,12 @@ export function Rooms() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="baseMonthlyRent">Harga per Bulan (Rp)</Label>
+              <Label htmlFor="base_monthly_rent">Harga per Bulan (Rp)</Label>
               <Input
-                id="baseMonthlyRent"
+                id="base_monthly_rent"
                 type="number"
-                value={formData.baseMonthlyRent}
-                onChange={(e) => setFormData({ ...formData, baseMonthlyRent: parseInt(e.target.value) })}
+                value={formData.base_monthly_rent}
+                onChange={(e) => setFormData({ ...formData, base_monthly_rent: parseInt(e.target.value) })}
                 required
               />
             </div>
@@ -728,7 +741,7 @@ export function Rooms() {
                     />
                     <Label htmlFor={`amenity-${key}`} className="text-sm cursor-pointer">
                       {key === 'ac' && 'AC'}
-                      {key === 'privateBathroom' && 'Kamar Mandi Dalam'}
+                      {key === 'private_bathroom' && 'Kamar Mandi Dalam'}
                       {key === 'balcony' && 'Balkon'}
                       {key === 'tv' && 'TV'}
                       {key === 'refrigerator' && 'Kulkas'}
@@ -779,8 +792,8 @@ export function Rooms() {
                 <Label htmlFor="edit-property">Properti</Label>
                 <select
                   id="edit-property"
-                  value={formData.propertyId}
-                  onChange={(e) => setFormData({ ...formData, propertyId: e.target.value })}
+                  value={formData.property_id}
+                  onChange={(e) => setFormData({ ...formData, property_id: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                   required
                 >
@@ -790,11 +803,11 @@ export function Rooms() {
                 </select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-roomNumber">Nomor Kamar</Label>
+                <Label htmlFor="edit-room_number">Nomor Kamar</Label>
                 <Input
-                  id="edit-roomNumber"
-                  value={formData.roomNumber}
-                  onChange={(e) => setFormData({ ...formData, roomNumber: e.target.value })}
+                  id="edit-room_number"
+                  value={formData.room_number}
+                  onChange={(e) => setFormData({ ...formData, room_number: e.target.value })}
                   required
                 />
               </div>
@@ -812,23 +825,23 @@ export function Rooms() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-sizeSqm">Ukuran (m²)</Label>
+                <Label htmlFor="edit-size_sqm">Ukuran (m²)</Label>
                 <Input
-                  id="edit-sizeSqm"
+                  id="edit-size_sqm"
                   type="number"
-                  value={formData.sizeSqm}
-                  onChange={(e) => setFormData({ ...formData, sizeSqm: parseInt(e.target.value) })}
+                  value={formData.size_sqm}
+                  onChange={(e) => setFormData({ ...formData, size_sqm: parseInt(e.target.value) })}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-roomType">Tipe Kamar</Label>
+                <Label htmlFor="edit-room_type">Tipe Kamar</Label>
                 <select
-                  id="edit-roomType"
-                  value={formData.roomType}
-                  onChange={(e) => setFormData({ ...formData, roomType: e.target.value })}
+                  id="edit-room_type"
+                  value={formData.room_type}
+                  onChange={(e) => setFormData({ ...formData, room_type: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                   required
                 >
@@ -838,11 +851,11 @@ export function Rooms() {
                 </select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-occupancyType">Tipe Okupansi</Label>
+                <Label htmlFor="edit-occupancy_type">Tipe Okupansi</Label>
                 <select
-                  id="edit-occupancyType"
-                  value={formData.occupancyType}
-                  onChange={(e) => setFormData({ ...formData, occupancyType: e.target.value })}
+                  id="edit-occupancy_type"
+                  value={formData.occupancy_type}
+                  onChange={(e) => setFormData({ ...formData, occupancy_type: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                   required
                 >
@@ -854,12 +867,12 @@ export function Rooms() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-baseMonthlyRent">Harga per Bulan (Rp)</Label>
+                <Label htmlFor="edit-base_monthly_rent">Harga per Bulan (Rp)</Label>
                 <Input
-                  id="edit-baseMonthlyRent"
+                  id="edit-base_monthly_rent"
                   type="number"
-                  value={formData.baseMonthlyRent}
-                  onChange={(e) => setFormData({ ...formData, baseMonthlyRent: parseInt(e.target.value) })}
+                  value={formData.base_monthly_rent}
+                  onChange={(e) => setFormData({ ...formData, base_monthly_rent: parseInt(e.target.value) })}
                   required
                 />
               </div>
@@ -897,7 +910,7 @@ export function Rooms() {
                     />
                     <Label htmlFor={`edit-amenity-${key}`} className="text-sm cursor-pointer">
                       {key === 'ac' && 'AC'}
-                      {key === 'privateBathroom' && 'Kamar Mandi Dalam'}
+                      {key === 'private_bathroom' && 'Kamar Mandi Dalam'}
                       {key === 'balcony' && 'Balkon'}
                       {key === 'tv' && 'TV'}
                       {key === 'refrigerator' && 'Kulkas'}
@@ -939,7 +952,7 @@ export function Rooms() {
           <DialogHeader>
             <DialogTitle>Konfirmasi Hapus</DialogTitle>
             <DialogDescription>
-              Apakah Anda yakin ingin menghapus kamar <strong>{selectedRoom?.roomNumber}</strong>? 
+              Apakah Anda yakin ingin menghapus kamar <strong>{selectedRoom?.room_number}</strong>? 
               Tindakan ini tidak dapat dibatalkan.
             </DialogDescription>
           </DialogHeader>

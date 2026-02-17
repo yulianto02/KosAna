@@ -20,6 +20,22 @@ import type { ACCleaningSchedule, Property, Room } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate } from '@/lib/format';
 
+// Static month options in Indonesian
+const MONTH_OPTIONS = [
+  { value: '1', label: 'Januari' },
+  { value: '2', label: 'Februari' },
+  { value: '3', label: 'Maret' },
+  { value: '4', label: 'April' },
+  { value: '5', label: 'Mei' },
+  { value: '6', label: 'Juni' },
+  { value: '7', label: 'Juli' },
+  { value: '8', label: 'Agustus' },
+  { value: '9', label: 'September' },
+  { value: '10', label: 'Oktober' },
+  { value: '11', label: 'November' },
+  { value: '12', label: 'Desember' },
+];
+
 export function ACCleaning() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSchedule, setSelectedSchedule] = useState<ACCleaningSchedule | null>(null);
@@ -30,17 +46,21 @@ export function ACCleaning() {
   const [isLoading, setIsLoading] = useState(false);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  
+  // New filter states
+  const [selectedPropertyFilter, setSelectedPropertyFilter] = useState('');
+  const [selectedMonthFilter, setSelectedMonthFilter] = useState('');
 
-  // Form state
+  // Form state - using snake_case to match API expectations
   const [formData, setFormData] = useState({
-    propertyId: '',
-    roomId: '',
-    acUnitId: '',
-    lastCleaningDate: '',
-    nextCleaningDate: '',
-    scheduleIntervalDays: 180,
-    technicianName: '',
-    cost: 0,
+    property_id: '',
+    room_id: '',
+    ac_unit_id: '',
+    last_cleaning_date: '',
+    next_cleaning_date: '',
+    schedule_interval_days: 180,
+    technician_name: '',
+    cost: null as number | null,
     notes: '',
   });
 
@@ -67,10 +87,27 @@ export function ACCleaning() {
     }
   };
 
-  // Filter schedules
+  // Filter schedules with new filters
   const filteredSchedules = acCleaningSchedules.filter(schedule => {
-    const room = rooms.find(r => r.id === schedule.roomId);
-    const matchesSearch = room?.roomNumber.includes(searchQuery);
+    // Property filter
+    if (selectedPropertyFilter && schedule.property_id !== selectedPropertyFilter) {
+      return false;
+    }
+    
+    // Month filter (based on next_cleaning_date for all tabs)
+    if (selectedMonthFilter && schedule.next_cleaning_date) {
+      const scheduleDate = new Date(schedule.next_cleaning_date);
+      if (!isNaN(scheduleDate.getTime())) {
+        const scheduleMonth = scheduleDate.getMonth() + 1; // getMonth() is 0-indexed
+        if (scheduleMonth.toString() !== selectedMonthFilter) {
+          return false;
+        }
+      }
+    }
+    
+    // Existing search and tab filters
+    const room = rooms.find(r => r.id === schedule.room_id);
+    const matchesSearch = room?.room_number.toLowerCase().includes(searchQuery.toLowerCase());
     
     if (activeTab === 'upcoming') return matchesSearch && schedule.status === 'pending';
     if (activeTab === 'completed') return matchesSearch && schedule.status === 'completed';
@@ -78,13 +115,13 @@ export function ACCleaning() {
     return matchesSearch;
   });
 
-  // Calculate stats
+  // Calculate stats - using snake_case properties
   const upcomingCount = acCleaningSchedules.filter(s => s.status === 'pending').length;
   const overdueCount = acCleaningSchedules.filter(s => s.status === 'overdue').length;
   const completedThisMonth = acCleaningSchedules.filter(s => 
     s.status === 'completed' && 
-    s.completedDate && 
-    new Date(s.completedDate).getMonth() === new Date().getMonth()
+    s.completed_date && 
+    new Date(s.completed_date).getMonth() === new Date().getMonth()
   ).length;
 
   // Handle add schedule
@@ -94,6 +131,18 @@ export function ACCleaning() {
       await acCleaningAPI.create(formData);
       toast.success('Jadwal AC berhasil ditambahkan');
       setIsAddDialogOpen(false);
+      // Reset form
+      setFormData({
+        property_id: '',
+        room_id: '',
+        ac_unit_id: '',
+        last_cleaning_date: '',
+        next_cleaning_date: '',
+        schedule_interval_days: 180,
+        technician_name: '',
+        cost: 0,
+        notes: '',
+      });
       fetchData();
     } catch (error) {
       toast.error('Gagal menambahkan jadwal');
@@ -104,7 +153,9 @@ export function ACCleaning() {
   const handleComplete = async () => {
     if (!selectedSchedule) return;
     try {
-      await acCleaningAPI.complete(selectedSchedule.id);
+      await acCleaningAPI.complete(selectedSchedule.id, {
+        completed_date: new Date().toISOString().split('T')[0],
+      });
       toast.success('Jadwal AC selesai');
       setSelectedSchedule(null);
       fetchData();
@@ -189,6 +240,43 @@ export function ACCleaning() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-4">
+        {/* Property Filter */}
+        <div className="min-w-[200px]">
+          <Label htmlFor="property-filter" className="sr-only">Filter Properti</Label>
+          <select
+            id="property-filter"
+            value={selectedPropertyFilter}
+            onChange={(e) => setSelectedPropertyFilter(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
+          >
+            <option value="">Semua Properti</option>
+            {properties.map(property => (
+              <option key={property.id} value={property.id}>
+                {property.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Month Filter */}
+        <div className="min-w-[150px]">
+          <Label htmlFor="month-filter" className="sr-only">Filter Bulan</Label>
+          <select
+            id="month-filter"
+            value={selectedMonthFilter}
+            onChange={(e) => setSelectedMonthFilter(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
+          >
+            <option value="">Semua Bulan</option>
+            {MONTH_OPTIONS.map(month => (
+              <option key={month.value} value={month.value}>
+                {month.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Search */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <Input
@@ -235,7 +323,7 @@ export function ACCleaning() {
                   </thead>
                   <tbody className="divide-y">
                     {filteredSchedules.map((schedule) => {
-                      const room = rooms.find(r => r.id === schedule.roomId);
+                      const room = rooms.find(r => r.id === schedule.room_id);
                       return (
                         <tr 
                           key={schedule.id} 
@@ -243,17 +331,17 @@ export function ACCleaning() {
                           onClick={() => setSelectedSchedule(schedule)}
                         >
                           <td className="px-4 py-3">
-                            <p className="font-medium">{room?.roomNumber}</p>
+                            <p className="font-medium">{room?.room_number}</p>
                             <p className="text-xs text-gray-500">
-                              {properties.find(p => p.id === schedule.propertyId)?.name}
+                              {properties.find(p => p.id === schedule.property_id)?.name}
                             </p>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="font-mono text-sm">{schedule.acUnitId || '-'}</span>
+                            <span className="font-mono text-sm">{schedule.ac_unit_id || '-'}</span>
                           </td>
                           <td className="px-4 py-3">
-                            {schedule.lastCleaningDate ? (
-                              <span>{formatDate(schedule.lastCleaningDate)}</span>
+                            {schedule.last_cleaning_date ? (
+                              <span>{formatDate(schedule.last_cleaning_date)}</span>
                             ) : (
                               <span className="text-gray-400">-</span>
                             )}
@@ -263,7 +351,7 @@ export function ACCleaning() {
                               "font-medium",
                               schedule.status === 'overdue' && "text-red-600"
                             )}>
-                              {formatDate(schedule.nextCleaningDate)}
+                              {formatDate(schedule.next_cleaning_date)}
                             </span>
                           </td>
                           <td className="px-4 py-3">
@@ -277,7 +365,7 @@ export function ACCleaning() {
                             </Badge>
                           </td>
                           <td className="px-4 py-3">
-                            {schedule.technicianName || (
+                            {schedule.technician_name || (
                               <span className="text-gray-400">Belum ditugaskan</span>
                             )}
                           </td>
@@ -328,8 +416,8 @@ export function ACCleaning() {
               <Label htmlFor="property">Properti *</Label>
               <select
                 id="property"
-                value={formData.propertyId}
-                onChange={(e) => setFormData({ ...formData, propertyId: e.target.value, roomId: '' })}
+                value={formData.property_id}
+                onChange={(e) => setFormData({ ...formData, property_id: e.target.value, room_id: '' })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
@@ -344,65 +432,65 @@ export function ACCleaning() {
               <Label htmlFor="room">Kamar *</Label>
               <select
                 id="room"
-                value={formData.roomId}
-                onChange={(e) => setFormData({ ...formData, roomId: e.target.value })}
+                value={formData.room_id}
+                onChange={(e) => setFormData({ ...formData, room_id: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
                 <option value="">Pilih Kamar</option>
-                {rooms.filter(r => r.propertyId === formData.propertyId).map(r => (
-                  <option key={r.id} value={r.id}>{r.roomNumber}</option>
+                {rooms.filter(r => r.property_id === formData.property_id).map(r => (
+                  <option key={r.id} value={r.id}>{r.room_number}</option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="acUnitId">ID Unit AC</Label>
+              <Label htmlFor="ac_unit_id">ID Unit AC</Label>
               <Input
-                id="acUnitId"
-                value={formData.acUnitId}
-                onChange={(e) => setFormData({ ...formData, acUnitId: e.target.value })}
+                id="ac_unit_id"
+                value={formData.ac_unit_id}
+                onChange={(e) => setFormData({ ...formData, ac_unit_id: e.target.value })}
                 placeholder="Contoh: AC-001"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="lastCleaningDate">Pembersihan Terakhir</Label>
+              <Label htmlFor="last_cleaning_date">Pembersihan Terakhir</Label>
               <Input
-                id="lastCleaningDate"
+                id="last_cleaning_date"
                 type="date"
-                value={formData.lastCleaningDate}
-                onChange={(e) => setFormData({ ...formData, lastCleaningDate: e.target.value })}
+                value={formData.last_cleaning_date}
+                onChange={(e) => setFormData({ ...formData, last_cleaning_date: e.target.value })}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="nextCleaningDate">Jadwal Berikutnya *</Label>
+              <Label htmlFor="next_cleaning_date">Jadwal Berikutnya *</Label>
               <Input
-                id="nextCleaningDate"
+                id="next_cleaning_date"
                 type="date"
-                value={formData.nextCleaningDate}
-                onChange={(e) => setFormData({ ...formData, nextCleaningDate: e.target.value })}
+                value={formData.next_cleaning_date}
+                onChange={(e) => setFormData({ ...formData, next_cleaning_date: e.target.value })}
                 required
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="scheduleIntervalDays">Interval (hari)</Label>
+              <Label htmlFor="schedule_interval_days">Interval (hari)</Label>
               <Input
-                id="scheduleIntervalDays"
+                id="schedule_interval_days"
                 type="number"
-                value={formData.scheduleIntervalDays}
-                onChange={(e) => setFormData({ ...formData, scheduleIntervalDays: parseInt(e.target.value) })}
+                value={formData.schedule_interval_days}
+                onChange={(e) => setFormData({ ...formData, schedule_interval_days: parseInt(e.target.value) })}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="technicianName">Nama Teknisi</Label>
+              <Label htmlFor="technician_name">Nama Teknisi</Label>
               <Input
-                id="technicianName"
-                value={formData.technicianName}
-                onChange={(e) => setFormData({ ...formData, technicianName: e.target.value })}
+                id="technician_name"
+                value={formData.technician_name}
+                onChange={(e) => setFormData({ ...formData, technician_name: e.target.value })}
               />
             </div>
 
@@ -411,8 +499,11 @@ export function ACCleaning() {
               <Input
                 id="cost"
                 type="number"
-                value={formData.cost}
-                onChange={(e) => setFormData({ ...formData, cost: parseInt(e.target.value) })}
+                value={formData.cost ?? ''}
+                onChange={(e) => setFormData({ 
+                  ...formData, 
+                  cost: e.target.value === '' ? null : parseInt(e.target.value) 
+                })}
               />
             </div>
 
@@ -449,11 +540,14 @@ export function ACCleaning() {
                   <Wind className="w-5 h-5" />
                   Detail Jadwal AC Cleaning
                 </DialogTitle>
+                <DialogDescription>
+                  Informasi detail jadwal pembersihan AC
+                </DialogDescription>
               </DialogHeader>
 
               <div className="space-y-4">
                 {(() => {
-                  const room = rooms.find(r => r.id === selectedSchedule.roomId);
+                  const room = rooms.find(r => r.id === selectedSchedule.room_id);
                   return (
                     <>
                       <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
@@ -471,27 +565,27 @@ export function ACCleaning() {
                         </div>
                         <div className="text-right">
                           <p className="text-sm text-gray-500">Interval</p>
-                          <p className="font-medium">{selectedSchedule.scheduleIntervalDays} hari</p>
+                          <p className="font-medium">{selectedSchedule.schedule_interval_days} hari</p>
                         </div>
                       </div>
 
                       <div className="space-y-3">
                         <div className="flex justify-between">
                           <span className="text-gray-500">Kamar</span>
-                          <span className="font-medium">{room?.roomNumber}</span>
+                          <span className="font-medium">{room?.room_number}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Unit AC</span>
-                          <span className="font-mono">{selectedSchedule.acUnitId || '-'}</span>
+                          <span className="font-mono">{selectedSchedule.ac_unit_id || '-'}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Properti</span>
-                          <span>{properties.find(p => p.id === selectedSchedule.propertyId)?.name}</span>
+                          <span>{properties.find(p => p.id === selectedSchedule.property_id)?.name}</span>
                         </div>
-                        {selectedSchedule.lastCleaningDate && (
+                        {selectedSchedule.last_cleaning_date && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Pembersihan Terakhir</span>
-                            <span>{formatDate(selectedSchedule.lastCleaningDate)}</span>
+                            <span>{formatDate(selectedSchedule.last_cleaning_date)}</span>
                           </div>
                         )}
                         <div className="flex justify-between">
@@ -500,19 +594,19 @@ export function ACCleaning() {
                             "font-medium",
                             selectedSchedule.status === 'overdue' && "text-red-600"
                           )}>
-                            {formatDate(selectedSchedule.nextCleaningDate)}
+                            {formatDate(selectedSchedule.next_cleaning_date)}
                           </span>
                         </div>
-                        {selectedSchedule.completedDate && (
+                        {selectedSchedule.completed_date && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Tanggal Selesai</span>
-                            <span>{formatDate(selectedSchedule.completedDate)}</span>
+                            <span>{formatDate(selectedSchedule.completed_date)}</span>
                           </div>
                         )}
-                        {selectedSchedule.technicianName && (
+                        {selectedSchedule.technician_name && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Teknisi</span>
-                            <span>{selectedSchedule.technicianName}</span>
+                            <span>{selectedSchedule.technician_name}</span>
                           </div>
                         )}
                         {selectedSchedule.cost > 0 && (

@@ -11,12 +11,32 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
-import { notifications } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { notificationsAPI } from '@/services/api';
+import { useEffect } from 'react';
 
-export function Header() {
+interface HeaderProps {
+  currentUser?: any;
+  onLogout: () => void;
+}
+
+export function Header({ currentUser, onLogout }: HeaderProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [notifications, setNotifications] = useState<any[]>([]);
   const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  useEffect(() => {
+    // Load notifications
+    const loadNotifications = async () => {
+      try {
+        const data = await notificationsAPI.getAll(currentUser?.id, true);
+        setNotifications(data);
+      } catch (error) {
+        console.error('Failed to load notifications:', error);
+      }
+    };
+    loadNotifications();
+  }, [currentUser]);
 
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-30">
@@ -76,7 +96,7 @@ export function Header() {
                   <span className="font-medium text-sm">{notification.title}</span>
                   <span className="text-xs text-gray-500 line-clamp-2">{notification.message}</span>
                   <span className="text-xs text-gray-400 mt-1">
-                    {new Date(notification.createdAt).toLocaleTimeString('id-ID', { 
+                    {new Date(notification.created_at).toLocaleTimeString('id-ID', { 
                       hour: '2-digit', 
                       minute: '2-digit' 
                     })}
@@ -99,8 +119,12 @@ export function Header() {
                 <User className="w-5 h-5 text-white" />
               </div>
               <div className="text-left">
-                <p className="text-sm font-medium text-gray-900">Administrator</p>
-                <p className="text-xs text-gray-500">admin@kosana.id</p>
+                <p className="text-sm font-medium text-gray-900">
+                  {currentUser?.fullName || 'Administrator'}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {currentUser?.email || 'admin@kosana.id'}
+                </p>
               </div>
               <ChevronDown className="w-4 h-4 text-gray-400" />
             </Button>
@@ -117,7 +141,10 @@ export function Header() {
               Pengaturan
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-red-600">
+            <DropdownMenuItem 
+              className="text-red-600"
+              onClick={onLogout}
+            >
               <LogOut className="w-4 h-4 mr-2" />
               Keluar
             </DropdownMenuItem>

@@ -1,7 +1,8 @@
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import type { Page } from '@/App';
+import { useNavigate } from 'react-router-dom';
+import { logout } from '@/services/auth';
 import {
   LayoutDashboard,
   Building2,
@@ -19,6 +20,9 @@ import {
   LogOut,
   Home
 } from 'lucide-react';
+
+// Page type for navigation
+type Page = 'dashboard' | 'properties' | 'rooms' | 'tenants' | 'payments' | 'expenses' | 'laundry' | 'maintenance' | 'ac-cleaning' | 'reports' | 'settings';
 
 interface SidebarProps {
   currentPage: Page;
@@ -48,6 +52,13 @@ const navItems: NavItem[] = [
 ];
 
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse }: SidebarProps) {
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
   return (
     <div className={cn(
       "fixed left-0 top-0 z-40 h-screen bg-[#1A3D5C] text-white transition-all duration-300 flex flex-col",
@@ -106,9 +117,10 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
         </nav>
       </ScrollArea>
 
-      {/* Footer */}
+      {/* Footer - Logout */}
       <div className="p-4 border-t border-white/10">
         <button
+          onClick={handleLogout}
           className={cn(
             "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-white/70 hover:bg-white/10 hover:text-white transition-all duration-200",
             collapsed && "justify-center px-2"

@@ -6,12 +6,13 @@ export interface User {
   username: string;
   email: string;
   phone: string;
-  fullName: string;
+  full_name: string;  // Changed from fullName
   role: UserRole;
-  isActive: boolean;
-  profileImageUrl?: string;
-  createdAt: Date;
-  lastLogin?: Date;
+  is_active: boolean;  // Changed from isActive
+  profile_image_url?: string;  // Changed from profileImageUrl
+  created_at: string;  // Changed from createdAt (PostgreSQL returns ISO string)
+  updated_at?: string;  // Changed from updatedAt
+  last_login?: string;  // Changed from lastLogin
 }
 
 // Property Management
@@ -24,25 +25,25 @@ export interface Property {
   address: string;
   city: string;
   district: string;
-  postalCode: string;
-  contactPhone: string;
-  propertyManagerId: string;
-  propertyType: PropertyType;
-  totalFloors: number;
-  totalRooms: number;
+  postal_code: string;  // Changed from postalCode
+  contact_phone: string;  // Changed from contactPhone
+  property_manager_id: string;  // Changed from propertyManagerId
+  property_type: PropertyType;  // Changed from propertyType
+  total_floors: number;  // Changed from totalFloors
+  total_rooms: number;  // Changed from totalRooms
   amenities: {
     wifi: boolean;
     ac: boolean;
-    hotWater: boolean;
+    hot_water: boolean;  // Changed from hotWater
     parking: boolean;
     cctv: boolean;
   };
   rules?: string;
   status: PropertyStatus;
-  floorPlanImages?: string[];
-  propertyPhotos?: string[];
-  createdAt: Date;
-  updatedAt: Date;
+  floor_plan_images?: string[];  // Changed from floorPlanImages
+  property_photos?: string[];  // Changed from propertyPhotos
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // Room Management
@@ -52,17 +53,17 @@ export type OccupancyType = 'single' | 'double';
 
 export interface Room {
   id: string;
-  propertyId: string;
-  roomNumber: string;
+  property_id: string;  // Changed from propertyId
+  room_number: string;  // Changed from roomNumber
   floor: number;
-  roomType: RoomType;
-  sizeSqm?: number;
-  occupancyType: OccupancyType;
-  baseMonthlyRent: number;
-  additionalPersonFee: number;
+  room_type: RoomType;  // Changed from roomType
+  size_sqm?: number;  // Changed from sizeSqm
+  occupancy_type: OccupancyType;  // Changed from occupancyType
+  base_monthly_rent: number;  // Changed from baseMonthlyRent
+  additional_person_fee: number;  // Changed from additionalPersonFee
   amenities: {
     ac: boolean;
-    privateBathroom: boolean;
+    private_bathroom: boolean;  // Changed from privateBathroom
     balcony: boolean;
     tv: boolean;
     refrigerator: boolean;
@@ -72,23 +73,23 @@ export interface Room {
   };
   description?: string;
   status: RoomStatus;
-  acUnitId?: string;
-  coordinatesX?: number;
-  coordinatesY?: number;
-  createdAt: Date;
-  updatedAt: Date;
+  ac_unit_id?: string;  // Changed from acUnitId
+  coordinates_x?: number;  // Changed from coordinatesX
+  coordinates_y?: number;  // Changed from coordinatesY
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 export interface RoomMedia {
   id: string;
-  roomId: string;
-  propertyId: string;
-  imageUrl: string;
-  imageType: 'room' | 'bathroom' | 'balcony' | 'view' | 'other';
-  isTemplate: boolean;
-  displayOrder: number;
-  uploadedBy: string;
-  createdAt: Date;
+  room_id: string;  // Changed from roomId
+  property_id: string;  // Changed from propertyId
+  image_url: string;  // Changed from imageUrl
+  image_type: 'room' | 'bathroom' | 'balcony' | 'view' | 'other';
+  is_template: boolean;  // Changed from isTemplate
+  display_order: number;  // Changed from displayOrder
+  uploaded_by: string;  // Changed from uploadedBy
+  created_at: string;  // Changed from createdAt
 }
 
 // Tenant Management
@@ -96,53 +97,55 @@ export type TenantStatus = 'active' | 'archived' | 'moved_out';
 
 export interface Tenant {
   id: string;
-  userId?: string;
-  propertyId: string;
-  roomId: string;
-  fullName: string;
+  user_id?: string;  // Changed from userId
+  property_id: string;  // Changed from propertyId
+  room_id: string;  // Changed from roomId
+  full_name: string;  // Changed from fullName
   phone: string;
   email?: string;
-  emergencyContact: string;
-  emergencyPhone: string;
-  ktpNumber: string;
-  ktpImageUrl: string;
-  checkInDate: Date;
-  checkOutDate?: Date;
-  contractDurationMonths: number;
-  baseMonthlyRent: number;
-  additionalPersonFee: number;
-  totalMonthlyRent: number;
-  securityDeposit: number;
-  lateFeePercentage: number;
-  paymentDueDay: number;
-  contractFileUrl?: string;
-  tenantSignatureUrl?: string;
-  adminSignatureUrl?: string;
-  isSharedRoom: boolean;
-  secondaryTenantName?: string;
-  secondaryTenantPhone?: string;
+  emergency_contact: string;  // Changed from emergencyContact
+  emergency_phone: string;  // Changed from emergencyPhone
+  ktp_number: string;  // Changed from ktpNumber
+  ktp_image_url: string;  // Changed from ktpImageUrl
+  check_in_date: string;  // Changed from checkInDate
+  check_out_date?: string;  // Changed from checkOutDate
+  contract_duration_months: number;  // Changed from contractDurationMonths
+  base_monthly_rent: number;  // Changed from baseMonthlyRent
+  additional_person_fee: number;  // Changed from additionalPersonFee
+  total_monthly_rent: number;  // Changed from totalMonthlyRent
+  security_deposit: number;  // Changed from securityDeposit
+  late_fee_percentage: number;  // Changed from lateFeePercentage
+  payment_due_day: number;  // Changed from paymentDueDay
+  contract_file_url?: string;  // Changed from contractFileUrl
+  tenant_signature_url?: string;  // Changed from tenantSignatureUrl
+  admin_signature_url?: string;  // Changed from adminSignatureUrl
+  is_shared_room: boolean;  // Changed from isSharedRoom
+  secondary_tenant_name?: string;  // Changed from secondaryTenantName
+  secondary_tenant_phone?: string;  // Changed from secondaryTenantPhone
   status: TenantStatus;
-  moveOutReason?: string;
-  finalSettlementAmount?: number;
-  archivedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  move_out_reason?: string;  // Changed from moveOutReason
+  final_settlement_amount?: number;  // Changed from finalSettlementAmount
+  archived_at?: string;  // Changed from archivedAt
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 export interface TenantVehicle {
   id: string;
-  tenantId: string;
-  roomId: string;
-  propertyId: string;
-  vehicleType: 'none' | 'motorbike' | 'car';
-  licensePlate?: string;
-  vehicleBrand?: string;
-  vehicleColor?: string;
-  parkingSpot?: string;
-  parkingType?: 'motorbike_area' | 'car_area' | 'shared';
-  isActive: boolean;
-  registeredAt: Date;
-  deregisteredAt?: Date;
+  tenant_id: string;  // Changed from tenantId
+  room_id: string;  // Changed from roomId
+  property_id: string;  // Changed from propertyId
+  vehicle_type: 'none' | 'motorbike' | 'car';
+  license_plate?: string;  // Changed from licensePlate
+  vehicle_brand?: string;  // Changed from vehicleBrand
+  vehicle_color?: string;  // Changed from vehicleColor
+  parking_spot?: string;  // Changed from parkingSpot
+  parking_type?: 'motorbike_area' | 'car_area' | 'shared';
+  is_active: boolean;  // Changed from isActive
+  registered_at: string;  // Changed from registeredAt
+  deregistered_at?: string;  // Changed from deregisteredAt
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // Payment Management
@@ -151,26 +154,26 @@ export type PaymentStatus = 'pending' | 'paid' | 'overdue' | 'refunded';
 
 export interface Payment {
   id: string;
-  tenantId: string;
-  roomId: string;
-  propertyId: string;
-  paymentPeriod: string; // Format: YYYY-MM
-  baseAmount: number;
-  additionalPersonFee: number;
-  lateFee: number;
-  laundryAmount: number;
-  totalAmount: number;
-  paymentMethod: PaymentMethod;
-  paymentStatus: PaymentStatus;
-  paymentDate?: Date;
-  dueDate: Date;
-  qrCodeUrl?: string;
-  transactionId?: string;
-  paymentProofUrl?: string;
+  tenant_id: string;  // Changed from tenantId
+  room_id: string;  // Changed from roomId
+  property_id: string;  // Changed from propertyId
+  payment_period: string;  // Changed from paymentPeriod (Format: YYYY-MM)
+  base_amount: number;  // Changed from baseAmount
+  additional_person_fee: number;  // Changed from additionalPersonFee
+  late_fee: number;  // Changed from lateFee
+  laundry_amount: number;  // Changed from laundryAmount
+  total_amount: number;  // Changed from totalAmount
+  payment_method: PaymentMethod;  // Changed from paymentMethod
+  payment_status: PaymentStatus;  // Changed from paymentStatus
+  payment_date?: string;  // Changed from paymentDate
+  due_date: string;  // Changed from dueDate
+  qr_code_url?: string;  // Changed from qrCodeUrl
+  transaction_id?: string;  // Changed from transactionId
+  payment_proof_url?: string;  // Changed from paymentProofUrl
   notes?: string;
-  paidAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  paid_at?: string;  // Changed from paidAt
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // Expense Management
@@ -191,19 +194,19 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export interface Expense {
   id: string;
-  propertyId: string;
-  roomId?: string;
-  expenseDate: Date;
-  expenseType: ExpenseType;
+  property_id: string;  // Changed from propertyId
+  room_id?: string;  // Changed from roomId
+  expense_date: string;  // Changed from expenseDate
+  expense_type: ExpenseType;  // Changed from expenseType
   amount: number;
-  providerName: string;
+  provider_name: string;  // Changed from providerName
   description?: string;
-  receiptImageUrl?: string;
-  reportedBy: string;
-  approvedBy?: string;
-  approvalStatus: ApprovalStatus;
-  createdAt: Date;
-  updatedAt: Date;
+  receipt_image_url?: string;  // Changed from receiptImageUrl
+  reported_by: string;  // Changed from reportedBy
+  approved_by?: string;  // Changed from approvedBy
+  approval_status: ApprovalStatus;  // Changed from approvalStatus
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // Laundry Management
@@ -212,23 +215,23 @@ export type LaundryStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled
 
 export interface LaundryOrder {
   id: string;
-  tenantId: string;
-  propertyId: string;
-  roomId: string;
-  orderDate: Date;
-  completionDate?: Date;
-  weightKg?: number;
-  itemCount?: number;
-  pricePerKg: number;
-  serviceType: LaundryServiceType;
-  totalPrice: number;
+  tenant_id: string;  // Changed from tenantId
+  property_id: string;  // Changed from propertyId
+  room_id: string;  // Changed from roomId
+  order_date: string;  // Changed from orderDate
+  completion_date?: string;  // Changed from completionDate
+  weight_kg?: number;  // Changed from weightKg
+  item_count?: number;  // Changed from itemCount
+  price_per_kg: number;  // Changed from pricePerKg
+  service_type: LaundryServiceType;  // Changed from serviceType
+  total_price: number;  // Changed from totalPrice
   status: LaundryStatus;
   notes?: string;
-  recordedBy: string;
-  completedBy?: string;
-  completedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  recorded_by: string;  // Changed from recordedBy
+  completed_by?: string;  // Changed from completedBy
+  completed_at?: string;  // Changed from completedAt
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // Maintenance Management
@@ -238,24 +241,24 @@ export type MaintenanceStatus = 'reported' | 'in_progress' | 'completed' | 'canc
 
 export interface MaintenanceRequest {
   id: string;
-  tenantId?: string;
-  roomId: string;
-  propertyId: string;
-  requestDate: Date;
-  issueType: IssueType;
+  tenant_id?: string;  // Changed from tenantId
+  room_id: string;  // Changed from roomId
+  property_id: string;  // Changed from propertyId
+  request_date: string;  // Changed from requestDate
+  issue_type: IssueType;  // Changed from issueType
   description: string;
   priority: PriorityLevel;
   status: MaintenanceStatus;
-  assignedTo?: string;
-  estimatedCompletion?: Date;
-  actualCompletion?: Date;
+  assigned_to?: string;  // Changed from assignedTo
+  estimated_completion?: string;  // Changed from estimatedCompletion
+  actual_completion?: string;  // Changed from actualCompletion
   cost: number;
   photos?: string[];
-  technicianName?: string;
-  technicianContact?: string;
+  technician_name?: string;  // Changed from technicianName
+  technician_contact?: string;  // Changed from technicianContact
   notes?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // AC Cleaning Schedule
@@ -263,36 +266,36 @@ export type ACScheduleStatus = 'pending' | 'completed' | 'overdue' | 'skipped';
 
 export interface ACCleaningSchedule {
   id: string;
-  roomId: string;
-  propertyId: string;
-  acUnitId?: string;
-  lastCleaningDate?: Date;
-  nextCleaningDate: Date;
-  scheduleIntervalDays: number;
+  room_id: string;  // Changed from roomId
+  property_id: string;  // Changed from propertyId
+  ac_unit_id?: string;  // Changed from acUnitId
+  last_cleaning_date?: string;  // Changed from lastCleaningDate
+  next_cleaning_date: string;  // Changed from nextCleaningDate
+  schedule_interval_days: number;  // Changed from scheduleIntervalDays
   status: ACScheduleStatus;
-  completedDate?: Date;
-  technicianName?: string;
-  technicianContact?: string;
+  completed_date?: string;  // Changed from completedDate
+  technician_name?: string;  // Changed from technicianName
+  technician_contact?: string;  // Changed from technicianContact
   cost: number;
   notes?: string;
-  completedBy?: string;
-  reminderSent: boolean;
-  reminderSentAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  completed_by?: string;  // Changed from completedBy
+  reminder_sent: boolean;  // Changed from reminderSent
+  reminder_sent_at?: string;  // Changed from reminderSentAt
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
-// Dashboard Stats
+// With this (snake_case to match PostgreSQL):
 export interface DashboardStats {
-  totalProperties: number;
-  totalRooms: number;
-  occupiedRooms: number;
-  vacantRooms: number;
-  totalTenants: number;
-  monthlyRevenue: number;
-  monthlyExpenses: number;
-  pendingPayments: number;
-  occupancyRate: number;
+  total_properties: number;
+  total_rooms: number;
+  occupied_rooms: number;
+  vacant_rooms: number;
+  total_tenants: number;
+  monthly_revenue: number;
+  monthly_expenses: number;
+  pending_payments: number;
+  occupancy_rate: number;
 }
 
 // Notification
@@ -300,16 +303,16 @@ export type NotificationType = 'payment' | 'maintenance' | 'system' | 'reminder'
 
 export interface Notification {
   id: string;
-  userId: string;
+  user_id: string;  // Changed from userId
   title: string;
   message: string;
   type: NotificationType;
-  isRead: boolean;
-  actionUrl?: string;
-  relatedEntityType?: string;
-  relatedEntityId?: string;
-  createdAt: Date;
-  readAt?: Date;
+  is_read: boolean;  // Changed from isRead
+  action_url?: string;  // Changed from actionUrl
+  related_entity_type?: string;  // Changed from relatedEntityType
+  related_entity_id?: string;  // Changed from relatedEntityId
+  created_at: string;  // Changed from createdAt
+  read_at?: string;  // Changed from readAt
 }
 
 // WhatsApp Message
@@ -326,33 +329,33 @@ export type WhatsAppMessageStatus = 'queued' | 'sent' | 'delivered' | 'read' | '
 
 export interface WhatsAppMessage {
   id: string;
-  recipientPhone: string;
-  recipientType: 'tenant' | 'prospect' | 'admin';
-  recipientId?: string;
-  messageType: WhatsAppMessageType;
-  messageTemplate: string;
-  messageContent: string;
-  whatsappMessageId?: string;
+  recipient_phone: string;  // Changed from recipientPhone
+  recipient_type: 'tenant' | 'prospect' | 'admin';  // Changed from recipientType
+  recipient_id?: string;  // Changed from recipientId
+  message_type: WhatsAppMessageType;  // Changed from messageType
+  message_template: string;  // Changed from messageTemplate
+  message_content: string;  // Changed from messageContent
+  whatsapp_message_id?: string;  // Changed from whatsappMessageId
   status: WhatsAppMessageStatus;
-  sentAt?: Date;
-  deliveredAt?: Date;
-  readAt?: Date;
-  failureReason?: string;
-  createdAt: Date;
+  sent_at?: string;  // Changed from sentAt
+  delivered_at?: string;  // Changed from deliveredAt
+  read_at?: string;  // Changed from readAt
+  failure_reason?: string;  // Changed from failureReason
+  created_at: string;  // Changed from createdAt
 }
 
 // Audit Log
 export interface AuditLog {
   id: string;
-  userId: string;
+  user_id: string;  // Changed from userId
   action: string;
-  entityType: string;
-  entityId: string;
-  oldValues?: Record<string, any>;
-  newValues?: Record<string, any>;
-  ipAddress?: string;
-  userAgent?: string;
-  createdAt: Date;
+  entity_type: string;  // Changed from entityType
+  entity_id: string;  // Changed from entityId
+  old_values?: Record<string, any>;  // Changed from oldValues
+  new_values?: Record<string, any>;  // Changed from newValues
+  ip_address?: string;  // Changed from ipAddress
+  user_agent?: string;  // Changed from userAgent
+  created_at: string;  // Changed from createdAt
 }
 
 // Contract
@@ -360,28 +363,28 @@ export type ContractStatus = 'draft' | 'signed' | 'active' | 'expired' | 'termin
 
 export interface Contract {
   id: string;
-  tenantId: string;
-  propertyId: string;
-  roomId: string;
-  contractNumber: string;
-  startDate: Date;
-  endDate: Date;
-  baseMonthlyRent: number;
-  additionalPersonFee: number;
-  totalMonthlyRent: number;
-  securityDeposit: number;
-  lateFeePercentage: number;
-  termsAndConditions: string;
-  specialClauses?: string;
-  contractFileUrl?: string;
-  tenantSignatureUrl?: string;
-  adminSignatureUrl?: string;
+  tenant_id: string;  // Changed from tenantId
+  property_id: string;  // Changed from propertyId
+  room_id: string;  // Changed from roomId
+  contract_number: string;  // Changed from contractNumber
+  start_date: string;  // Changed from startDate
+  end_date: string;  // Changed from endDate
+  base_monthly_rent: number;  // Changed from baseMonthlyRent
+  additional_person_fee: number;  // Changed from additionalPersonFee
+  total_monthly_rent: number;  // Changed from totalMonthlyRent
+  security_deposit: number;  // Changed from securityDeposit
+  late_fee_percentage: number;  // Changed from lateFeePercentage
+  terms_and_conditions: string;  // Changed from termsAndConditions
+  special_clauses?: string;  // Changed from specialClauses
+  contract_file_url?: string;  // Changed from contractFileUrl
+  tenant_signature_url?: string;  // Changed from tenantSignatureUrl
+  admin_signature_url?: string;  // Changed from adminSignatureUrl
   status: ContractStatus;
-  signedAt?: Date;
-  terminatedAt?: Date;
-  terminationReason?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  signed_at?: string;  // Changed from signedAt
+  terminated_at?: string;  // Changed from terminatedAt
+  termination_reason?: string;  // Changed from terminationReason
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // Vacancy Alert
@@ -389,38 +392,42 @@ export type VacancyAlertStatus = 'active' | 'notified' | 'expired';
 
 export interface VacancyAlert {
   id: string;
-  prospectName: string;
-  prospectPhone: string;
-  prospectEmail?: string;
-  preferredPropertyId?: string;
-  preferredRoomType: 'standard' | 'deluxe' | 'premium' | 'any';
-  preferredOccupancy: 'single' | 'double' | 'any';
-  budgetMin?: number;
-  budgetMax?: number;
-  moveInDate?: Date;
+  prospect_name: string;  // Changed from prospectName
+  prospect_phone: string;  // Changed from prospectPhone
+  prospect_email?: string;  // Changed from prospectEmail
+  preferred_property_id?: string;  // Changed from preferredPropertyId
+  preferred_room_type: 'standard' | 'deluxe' | 'premium' | 'any';  // Changed from preferredRoomType
+  preferred_occupancy: 'single' | 'double' | 'any';  // Changed from preferredOccupancy
+  budget_min?: number;  // Changed from budgetMin
+  budget_max?: number;  // Changed from budgetMax
+  move_in_date?: string;  // Changed from moveInDate
   status: VacancyAlertStatus;
-  notifiedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  notified_at?: string;  // Changed from notifiedAt
+  created_at: string;  // Changed from createdAt
+  updated_at: string;  // Changed from updatedAt
 }
 
 // Chart Data Types
 export interface MonthlyRevenueData {
   month: string;
-  roomRevenue: number;
-  laundryRevenue: number;
-  totalRevenue: number;
+  room_revenue: number;      // Changed from roomRevenue
+  laundry_revenue: number;   // Changed from laundryRevenue
+  total_revenue: number;     // Changed from totalRevenue
 }
 
 export interface OccupancyData {
   month: string;
   occupied: number;
   vacant: number;
-  rate: number;
+  rate: number;              // Keep as 'rate' if your API returns this
+  // OR if your API returns occupancy_rate:
+  // occupancy_rate: number;
 }
 
+// Replace ExpenseByCategory (around line 443):
 export interface ExpenseByCategory {
-  category: string;
-  amount: number;
+  category: string;          // OR expense_type if that's what your API returns
+  amount: number;            // OR total_amount
   percentage: number;
 }
+

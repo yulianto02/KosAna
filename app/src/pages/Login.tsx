@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { login, getUserFromToken,syncUserFromToken,removeToken } from '@/services/auth';  // ← Tambahkan import ini
+import { toast } from 'sonner';            // ← Tambahkan import ini (untuk feedback)
 
 interface LoginProps {
   onLogin: () => void;
@@ -23,16 +25,62 @@ export function Login({ onLogin }: LoginProps) {
     setError('');
     setLoading(true);
 
-    // Simulate login
-    setTimeout(() => {
-      if (email && password) {
-        onLogin();
-      } else {
-        setError('Email dan password harus diisi');
+    try {
+      await login({ username: email.trim(), password });
+
+      // Sync user dari token yang baru diset
+      syncUserFromToken();
+
+      const user = getUserFromToken();
+      if (!user?.id) {
+        throw new Error('Gagal mengambil data user dari token');
       }
+
+      toast.success('Login berhasil! Selamat datang kembali.');
+      onLogin();
+    } catch (err: any) {
+      const message = err.message || 'Login gagal. Periksa username dan password Anda.';
+      setError(message);
+      toast.error(message);
+      // Cleanup jika gagal
+      removeToken();
+      localStorage.removeItem('user');
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
+
+  // const handleSubmit = async (e: React.FormEvent) => {
+  //   e.preventDefault();
+  //   setError('');
+  //   setLoading(true);
+
+  //   try {
+  //     // Lakukan login → ini akan set token otomatis via setToken di auth.ts
+  //     await login({ username: email.trim(), password });
+
+  //     // Setelah token diset, fetch data user dari /auth/me
+  //     // Ini lebih reliable karena /auth/me pasti mengembalikan user jika token valid
+  //     const user = await getCurrentUser();
+
+  //     if (!user) {
+  //       throw new Error('Gagal mengambil data user setelah login');
+  //     }
+
+  //     // Simpan user ke localStorage agar getCurrentUserId() bisa langsung pakai
+  //     localStorage.setItem('user', JSON.stringify(user));
+
+  //     toast.success('Login berhasil! Selamat datang kembali.');
+  //     onLogin();  // Arahkan ke dashboard
+  //   } catch (err: any) {
+  //     const message = err.message || 'Login gagal. Periksa username dan password Anda.';
+  //     setError(message);
+  //     toast.error(message);
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#1A3D5C] via-[#0F2744] to-[#1A3D5C] flex items-center justify-center p-4">
@@ -68,17 +116,18 @@ export function Login({ onLogin }: LoginProps) {
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="username">Username</Label>  {/* ← Ubah dari "Email" jadi "Username" */}
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <Input
-                    id="email"
-                    type="email"
-                    placeholder="nama@email.com"
+                    id="username"
+                    type="text"
+                    placeholder="Contoh: admin"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="pl-10"
                     required
+                    disabled={loading}
                   />
                 </div>
               </div>
@@ -95,11 +144,13 @@ export function Login({ onLogin }: LoginProps) {
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 pr-10"
                     required
+                    disabled={loading}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    disabled={loading}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -112,6 +163,7 @@ export function Login({ onLogin }: LoginProps) {
                     id="remember"
                     checked={rememberMe}
                     onCheckedChange={(checked) => setRememberMe(checked as boolean)}
+                    disabled={loading}
                   />
                   <Label htmlFor="remember" className="text-sm font-normal">
                     Ingat saya

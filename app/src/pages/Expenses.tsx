@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, Receipt, Download, Edit, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { expensesAPI, propertiesAPI, roomsAPI } from '@/services/api';
+import { getUserFromToken } from '@/services/auth';
 import type { Expense, Property, Room } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate, getExpenseTypeLabel } from '@/lib/format';
@@ -23,6 +24,10 @@ export function Expenses() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // NEW FILTER STATES
+  const [selectedProperty, setSelectedProperty] = useState<string>('all');
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -31,17 +36,47 @@ export function Expenses() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
-  // Form state
+  // Form state - using snake_case to match database
   const [formData, setFormData] = useState({
-    propertyId: '',
-    roomId: '',
-    expenseType: 'electricity',
-    providerName: '',
+    property_id: '',
+    room_id: '',
+    expense_type: 'electricity',
+    provider_name: '',
     amount: 0,
-    expenseDate: new Date().toISOString().split('T')[0],
+    expense_date: new Date().toISOString().split('T')[0],
     description: '',
-    approvalStatus: 'approved' as 'pending' | 'approved' | 'rejected',
+    approval_status: 'approved' as 'pending' | 'approved' | 'rejected',
+    reported_by: '',
   });
+
+  // Calculate available months from expenses data
+  const monthOptions = useMemo(() => {
+    const monthsSet = new Set<string>();
+    expenses.forEach(expense => {
+      if (expense.expense_date) {
+        // Extract YYYY-MM from date string (handles ISO format and YYYY-MM-DD)
+        const dateStr = expense.expense_date.toString();
+        const monthKey = dateStr.substring(0, 7);
+        if (/^\d{4}-\d{2}$/.test(monthKey)) {
+          monthsSet.add(monthKey);
+        }
+      }
+    });
+    return Array.from(monthsSet).sort((a, b) => b.localeCompare(a)); // Newest first
+  }, [expenses]);
+  
+  // Format month key (YYYY-MM) to Indonesian display format
+  const formatMonthKey = (key: string) => {
+    const [year, month] = key.split('-');
+    const monthNames = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 
+      'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'
+    ];
+    const monthIndex = parseInt(month, 10) - 1;
+    return monthIndex >= 0 && monthIndex < 12 
+      ? `${monthNames[monthIndex]} ${year}` 
+      : key;
+  };
 
   // Fetch data on mount
   useEffect(() => {
@@ -66,42 +101,68 @@ export function Expenses() {
     }
   };
 
-  // Filter expenses
+  // Filter expenses with new property and month filters
   const filteredExpenses = expenses.filter(expense => {
+    // Existing filters
     const matchesSearch = 
-      expense.providerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      expense.provider_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       expense.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || expense.expenseType === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesCategory = selectedCategory === 'all' || expense.expense_type === selectedCategory;
+    
+    // NEW: Property filter
+    const matchesProperty = selectedProperty === 'all' || 
+                           expense.property_id === selectedProperty;
+    
+    // NEW: Month filter
+    let matchesMonth = true;
+    if (selectedMonth !== 'all' && expense.expense_date) {
+      const expenseMonth = expense.expense_date.toString().substring(0, 7);
+      matchesMonth = expenseMonth === selectedMonth;
+    }
+    
+    return matchesSearch && matchesCategory && matchesProperty && matchesMonth;
   });
 
-  // Calculate totals
-  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const roomExpenses = filteredExpenses.filter(e => e.roomId).reduce((sum, e) => sum + e.amount, 0);
-  const overheadExpenses = filteredExpenses.filter(e => !e.roomId).reduce((sum, e) => sum + e.amount, 0);
+  // Calculate totals with null/undefined safety
+  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const roomExpenses = filteredExpenses.filter(e => e.room_id).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const overheadExpenses = filteredExpenses.filter(e => !e.room_id).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
   // Get expense categories
-  const categories = Array.from(new Set(expenses.map(e => e.expenseType)));
+  const categories = Array.from(new Set(expenses.map(e => e.expense_type)));
 
-  // Reset form
+  // Reset form - using snake_case, ADD reported_by from current user
   const resetForm = () => {
+    const currentUser = getUserFromToken();
     setFormData({
-      propertyId: properties[0]?.id || '',
-      roomId: '',
-      expenseType: 'electricity',
-      providerName: '',
+      property_id: properties[0]?.id || '',
+      room_id: '',
+      expense_type: 'electricity',
+      provider_name: '',
       amount: 0,
-      expenseDate: new Date().toISOString().split('T')[0],
+      expense_date: new Date().toISOString().split('T')[0],
       description: '',
-      approvalStatus: 'approved',
+      approval_status: 'approved',
+      reported_by: currentUser?.id || '',
     });
   };
 
-  // Handle add expense
+  // Handle add expense - include reported_by
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await expensesAPI.create(formData);
+      const currentUser = getUserFromToken();
+      if (!currentUser?.id) {
+        toast.error('Sesi tidak valid, silakan login ulang');
+        return;
+      }
+      
+      const dataToSubmit = {
+        ...formData,
+        reported_by: currentUser.id,
+      };
+      
+      await expensesAPI.create(dataToSubmit);
       toast.success('Pengeluaran berhasil ditambahkan');
       setIsAddDialogOpen(false);
       resetForm();
@@ -111,12 +172,19 @@ export function Expenses() {
     }
   };
 
-  // Handle edit expense
+  // Handle edit expense - include reported_by
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedExpense) return;
     try {
-      await expensesAPI.update(selectedExpense.id, formData);
+      const currentUser = getUserFromToken();
+      
+      const dataToSubmit = {
+        ...formData,
+        reported_by: selectedExpense.reported_by || currentUser?.id || '',
+      };
+      
+      await expensesAPI.update(selectedExpense.id, dataToSubmit);
       toast.success('Pengeluaran berhasil diperbarui');
       setIsEditDialogOpen(false);
       setSelectedExpense(null);
@@ -140,18 +208,19 @@ export function Expenses() {
     }
   };
 
-  // Open edit dialog
+  // Open edit dialog - using snake_case, ADD reported_by
   const openEditDialog = (expense: Expense) => {
     setSelectedExpense(expense);
     setFormData({
-      propertyId: expense.propertyId,
-      roomId: expense.roomId || '',
-      expenseType: expense.expenseType,
-      providerName: expense.providerName,
+      property_id: expense.property_id,
+      room_id: expense.room_id || '',
+      expense_type: expense.expense_type,
+      provider_name: expense.provider_name,
       amount: expense.amount,
-      expenseDate: new Date(expense.expenseDate).toISOString().split('T')[0],
+      expense_date: new Date(expense.expense_date).toISOString().split('T')[0],
       description: expense.description || '',
-      approvalStatus: expense.approvalStatus,
+      approval_status: expense.approval_status,
+      reported_by: expense.reported_by || '',
     });
     setIsEditDialogOpen(true);
   };
@@ -225,7 +294,50 @@ export function Expenses() {
         </Card>
       </div>
 
-      {/* Filters */}
+      {/* NEW FILTERS ROW - Property and Month */}
+      <div className="flex flex-wrap items-end gap-4 pb-4 border-b border-gray-200">
+        {/* Property Filter */}
+        <div className="min-w-[200px]">
+          <Label htmlFor="property-filter" className="text-xs text-gray-500 mb-1 block">
+            Properti
+          </Label>
+          <select
+            id="property-filter"
+            value={selectedProperty}
+            onChange={(e) => setSelectedProperty(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C] text-sm"
+          >
+            <option value="all">Semua Properti</option>
+            {properties.map(property => (
+              <option key={property.id} value={property.id}>
+                {property.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Month Filter */}
+        <div className="min-w-[180px]">
+          <Label htmlFor="month-filter" className="text-xs text-gray-500 mb-1 block">
+            Bulan
+          </Label>
+          <select
+            id="month-filter"
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C] text-sm"
+          >
+            <option value="all">Semua Bulan</option>
+            {monthOptions.map(monthKey => (
+              <option key={monthKey} value={monthKey}>
+                {formatMonthKey(monthKey)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Existing Filters Row */}
       <div className="flex flex-wrap items-center gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -279,25 +391,25 @@ export function Expenses() {
               </thead>
               <tbody className="divide-y">
                 {filteredExpenses.map((expense) => {
-                  const room = rooms.find(r => r.id === expense.roomId);
+                  const room = rooms.find(r => r.id === expense.room_id);
                   return (
                     <tr 
                       key={expense.id} 
                       className="hover:bg-gray-50 cursor-pointer"
                       onClick={() => setSelectedExpense(expense)}
                     >
-                      <td className="px-4 py-3">{formatDate(expense.expenseDate)}</td>
+                      <td className="px-4 py-3">{formatDate(expense.expense_date)}</td>
                       <td className="px-4 py-3">
-                        <Badge variant="outline">{getExpenseTypeLabel(expense.expenseType)}</Badge>
+                        <Badge variant="outline">{getExpenseTypeLabel(expense.expense_type)}</Badge>
                       </td>
                       <td className="px-4 py-3">
                         {room ? (
-                          <span>{room.roomNumber}</span>
+                          <span>{room.room_number}</span>
                         ) : (
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">{expense.providerName}</td>
+                      <td className="px-4 py-3">{expense.provider_name}</td>
                       <td className="px-4 py-3">
                         <span className="text-sm text-gray-600 line-clamp-1">{expense.description || '-'}</span>
                       </td>
@@ -306,12 +418,12 @@ export function Expenses() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge className={cn(
-                          expense.approvalStatus === 'approved' && "bg-green-100 text-green-700",
-                          expense.approvalStatus === 'pending' && "bg-yellow-100 text-yellow-700",
-                          expense.approvalStatus === 'rejected' && "bg-red-100 text-red-700",
+                          expense.approval_status === 'approved' && "bg-green-100 text-green-700",
+                          expense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700",
+                          expense.approval_status === 'rejected' && "bg-red-100 text-red-700",
                         )}>
-                          {expense.approvalStatus === 'approved' ? 'Disetujui' : 
-                           expense.approvalStatus === 'pending' ? 'Menunggu' : 'Ditolak'}
+                          {expense.approval_status === 'approved' ? 'Disetujui' : 
+                           expense.approval_status === 'pending' ? 'Menunggu' : 'Ditolak'}
                         </Badge>
                       </td>
                     </tr>
@@ -352,8 +464,8 @@ export function Expenses() {
               <Label htmlFor="property">Properti *</Label>
               <select
                 id="property"
-                value={formData.propertyId}
-                onChange={(e) => setFormData({ ...formData, propertyId: e.target.value, roomId: '' })}
+                value={formData.property_id}
+                onChange={(e) => setFormData({ ...formData, property_id: e.target.value, room_id: '' })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
@@ -367,43 +479,46 @@ export function Expenses() {
               <Label htmlFor="room">Kamar (opsional)</Label>
               <select
                 id="room"
-                value={formData.roomId}
-                onChange={(e) => setFormData({ ...formData, roomId: e.target.value })}
+                value={formData.room_id}
+                onChange={(e) => setFormData({ ...formData, room_id: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
               >
-                <option value="">Tidak ada (Operasional)</option>
-                {rooms.filter(r => r.propertyId === formData.propertyId).map(r => (
-                  <option key={r.id} value={r.id}>{r.roomNumber}</option>
+                <option value="">Overhead</option>
+                {rooms.filter(r => r.property_id === formData.property_id).map(r => (
+                  <option key={r.id} value={r.id}>{r.room_number}</option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="expenseType">Kategori *</Label>
+              <Label htmlFor="expense_type">Kategori *</Label>
               <select
-                id="expenseType"
-                value={formData.expenseType}
-                onChange={(e) => setFormData({ ...formData, expenseType: e.target.value })}
+                id="expense_type"
+                value={formData.expense_type}
+                onChange={(e) => setFormData({ ...formData, expense_type: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
                 <option value="electricity">Listrik</option>
                 <option value="water">Air</option>
                 <option value="internet">Internet</option>
-                <option value="cleaning">Kebersihan</option>
-                <option value="maintenance">Perawatan</option>
-                <option value="security">Keamanan</option>
-                <option value="staff">Staf</option>
+                <option value="ac_repair">Perbaikan AC</option>
+                <option value="room_repair">Perbaikan Kamar</option>
+                <option value="ac_cleaning">Pembersihan AC</option>
+                <option value="gallon">Galon</option>
+                <option value="gas">Gas</option>
+                <option value="laundry_soap">Deterjen Laundry</option>
+                <option value="staff_salary">Gaji Staf</option>
                 <option value="other">Lainnya</option>
               </select>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="providerName">Nama Provider *</Label>
+              <Label htmlFor="provider_name">Nama Provider *</Label>
               <Input
-                id="providerName"
-                value={formData.providerName}
-                onChange={(e) => setFormData({ ...formData, providerName: e.target.value })}
+                id="provider_name"
+                value={formData.provider_name}
+                onChange={(e) => setFormData({ ...formData, provider_name: e.target.value })}
                 placeholder="Contoh: PLN, PDAM, dll"
                 required
               />
@@ -415,18 +530,18 @@ export function Expenses() {
                 id="amount"
                 type="number"
                 value={formData.amount}
-                onChange={(e) => setFormData({ ...formData, amount: parseInt(e.target.value) })}
+                onChange={(e) => setFormData({ ...formData, amount: parseInt(e.target.value)||0 })}
                 required
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="expenseDate">Tanggal *</Label>
+              <Label htmlFor="expense_date">Tanggal *</Label>
               <Input
-                id="expenseDate"
+                id="expense_date"
                 type="date"
-                value={formData.expenseDate}
-                onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
+                value={formData.expense_date}
+                onChange={(e) => setFormData({ ...formData, expense_date: e.target.value })}
                 required
               />
             </div>
@@ -475,33 +590,35 @@ export function Expenses() {
                     </p>
                   </div>
                   <Badge className={cn(
-                    selectedExpense.approvalStatus === 'approved' && "bg-green-100 text-green-700",
-                    selectedExpense.approvalStatus === 'pending' && "bg-yellow-100 text-yellow-700",
+                    selectedExpense.approval_status === 'approved' && "bg-green-100 text-green-700",
+                    selectedExpense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700",
+                    selectedExpense.approval_status === 'rejected' && "bg-red-100 text-red-700",
                   )}>
-                    {selectedExpense.approvalStatus === 'approved' ? 'Disetujui' : 'Menunggu'}
+                    {selectedExpense.approval_status === 'approved' ? 'Disetujui' : 
+                     selectedExpense.approval_status === 'pending' ? 'Menunggu' : 'Ditolak'}
                   </Badge>
                 </div>
 
                 <div className="space-y-3">
                   <div className="flex justify-between">
                     <span className="text-gray-500">Tanggal</span>
-                    <span className="font-medium">{formatDate(selectedExpense.expenseDate)}</span>
+                    <span className="font-medium">{formatDate(selectedExpense.expense_date)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Kategori</span>
-                    <Badge variant="outline">{getExpenseTypeLabel(selectedExpense.expenseType)}</Badge>
+                    <Badge variant="outline">{getExpenseTypeLabel(selectedExpense.expense_type)}</Badge>
                   </div>
-                  {selectedExpense.roomId && (
+                  {selectedExpense.room_id && (
                     <div className="flex justify-between">
                       <span className="text-gray-500">Kamar</span>
                       <span className="font-medium">
-                        {rooms.find(r => r.id === selectedExpense.roomId)?.roomNumber}
+                        {rooms.find(r => r.id === selectedExpense.room_id)?.room_number}
                       </span>
                     </div>
                   )}
                   <div className="flex justify-between">
                     <span className="text-gray-500">Provider</span>
-                    <span className="font-medium">{selectedExpense.providerName}</span>
+                    <span className="font-medium">{selectedExpense.provider_name}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Keterangan</span>
@@ -510,7 +627,7 @@ export function Expenses() {
                   <div className="flex justify-between">
                     <span className="text-gray-500">Properti</span>
                     <span className="font-medium">
-                      {properties.find(p => p.id === selectedExpense.propertyId)?.name}
+                      {properties.find(p => p.id === selectedExpense.property_id)?.name}
                     </span>
                   </div>
                 </div>
@@ -557,8 +674,8 @@ export function Expenses() {
               <Label htmlFor="edit-property">Properti *</Label>
               <select
                 id="edit-property"
-                value={formData.propertyId}
-                onChange={(e) => setFormData({ ...formData, propertyId: e.target.value, roomId: '' })}
+                value={formData.property_id}
+                onChange={(e) => setFormData({ ...formData, property_id: e.target.value, room_id: '' })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
@@ -572,43 +689,46 @@ export function Expenses() {
               <Label htmlFor="edit-room">Kamar (opsional)</Label>
               <select
                 id="edit-room"
-                value={formData.roomId}
-                onChange={(e) => setFormData({ ...formData, roomId: e.target.value })}
+                value={formData.room_id}
+                onChange={(e) => setFormData({ ...formData, room_id: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
               >
-                <option value="">Tidak ada (Operasional)</option>
-                {rooms.filter(r => r.propertyId === formData.propertyId).map(r => (
-                  <option key={r.id} value={r.id}>{r.roomNumber}</option>
+                <option value="">Overhead</option>
+                {rooms.filter(r => r.property_id === formData.property_id).map(r => (
+                  <option key={r.id} value={r.id}>{r.room_number}</option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="edit-expenseType">Kategori *</Label>
+              <Label htmlFor="edit-expense_type">Kategori *</Label>
               <select
-                id="edit-expenseType"
-                value={formData.expenseType}
-                onChange={(e) => setFormData({ ...formData, expenseType: e.target.value })}
+                id="edit-expense_type"
+                value={formData.expense_type}
+                onChange={(e) => setFormData({ ...formData, expense_type: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
                 <option value="electricity">Listrik</option>
                 <option value="water">Air</option>
                 <option value="internet">Internet</option>
-                <option value="cleaning">Kebersihan</option>
-                <option value="maintenance">Perawatan</option>
-                <option value="security">Keamanan</option>
-                <option value="staff">Staf</option>
+                <option value="ac_repair">Perbaikan AC</option>
+                <option value="room_repair">Perbaikan Kamar</option>
+                <option value="ac_cleaning">Pembersihan AC</option>
+                <option value="gallon">Galon</option>
+                <option value="gas">Gas</option>
+                <option value="laundry_soap">Deterjen Laundry</option>
+                <option value="staff_salary">Gaji Staf</option>
                 <option value="other">Lainnya</option>
               </select>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="edit-providerName">Nama Provider *</Label>
+              <Label htmlFor="edit-provider_name">Nama Provider *</Label>
               <Input
-                id="edit-providerName"
-                value={formData.providerName}
-                onChange={(e) => setFormData({ ...formData, providerName: e.target.value })}
+                id="edit-provider_name"
+                value={formData.provider_name}
+                onChange={(e) => setFormData({ ...formData, provider_name: e.target.value })}
                 required
               />
             </div>
@@ -625,12 +745,12 @@ export function Expenses() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="edit-expenseDate">Tanggal *</Label>
+              <Label htmlFor="edit-expense_date">Tanggal *</Label>
               <Input
-                id="edit-expenseDate"
+                id="edit-expense_date"
                 type="date"
-                value={formData.expenseDate}
-                onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
+                value={formData.expense_date}
+                onChange={(e) => setFormData({ ...formData, expense_date: e.target.value })}
                 required
               />
             </div>

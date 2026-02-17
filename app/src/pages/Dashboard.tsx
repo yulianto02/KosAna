@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Building2, Users, CreditCard, TrendingUp, 
   TrendingDown, AlertCircle, Plus, ArrowRight,
@@ -6,7 +7,6 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { 
@@ -30,19 +30,21 @@ import { formatCurrency, formatPercentage } from '@/lib/format';
 
 const COLORS = ['#1A3D5C', '#4A6D8C', '#D4A84B', '#E8C878', '#0F2744', '#B08A3A'];
 
+// Updated to snake_case to match PostgreSQL API response
 interface DashboardStats {
-  totalProperties: number;
-  totalRooms: number;
-  occupiedRooms: number;
-  vacantRooms: number;
-  totalTenants: number;
-  monthlyRevenue: number;
-  monthlyExpenses: number;
-  pendingPayments: number;
-  occupancyRate: number;
+  total_properties: number;
+  total_rooms: number;
+  occupied_rooms: number;
+  vacant_rooms: number;
+  total_tenants: number;
+  monthly_revenue: number;
+  monthly_expenses: number;
+  pending_payments: number;
+  occupancy_rate: number;
 }
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const [timeRange, setTimeRange] = useState('month');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [revenueData, setRevenueData] = useState<any[]>([]);
@@ -73,6 +75,7 @@ export function Dashboard() {
         setOccupancyData(occupancyRes);
         setExpenseData(expenseRes);
         setPendingPayments(paymentsRes.slice(0, 5));
+        // Using snake_case property names
         setUpcomingAC(acRes.filter((s: any) => s.status === 'pending').slice(0, 3));
         setMaintenanceRequests(maintRes.filter((r: any) => r.status === 'reported').slice(0, 3));
       } catch (error) {
@@ -92,6 +95,12 @@ export function Dashboard() {
     { type: 'laundry', message: 'Pesanan laundry kamar 104 selesai', time: '6 jam yang lalu', icon: Shirt, color: 'purple' },
     { type: 'maintenance', message: 'Request perbaikan lampu kamar 201', time: '8 jam yang lalu', icon: Wrench, color: 'orange' },
   ];
+
+  // Navigation handlers using react-router
+  const handleAddTenant = () => navigate('/tenants');
+  const handleGoToPayments = () => navigate('/payments');
+  const handleGoToExpenses = () => navigate('/expenses');
+  const handleGoToLaundry = () => navigate('/laundry');
 
   if (loading) {
     return (
@@ -120,19 +129,19 @@ export function Dashboard() {
             <option value="month">Bulan Ini</option>
             <option value="year">Tahun Ini</option>
           </select>
-          <Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => window.location.href = '#/tenants'}>
+          <Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={handleAddTenant}>
             <Plus className="w-4 h-4 mr-2" />
             Tambah Penghuni
           </Button>
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards - using snake_case properties */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Properti"
-          value={stats?.totalProperties?.toString() || '0'}
-          subtitle={`${stats?.totalRooms || 0} Total Kamar`}
+          value={stats?.total_properties?.toString() || '0'}
+          subtitle={`${stats?.total_rooms || 0} Total Kamar`}
           icon={Building2}
           trend="up"
           trendValue="+1 bulan ini"
@@ -140,8 +149,8 @@ export function Dashboard() {
         />
         <StatCard
           title="Okupansi"
-          value={`${formatPercentage(stats?.occupancyRate || 0)}`}
-          subtitle={`${stats?.occupiedRooms || 0} Terisi / ${stats?.vacantRooms || 0} Kosong`}
+          value={`${formatPercentage(stats?.occupancy_rate || 0)}`}
+          subtitle={`${stats?.occupied_rooms || 0} Terisi / ${stats?.vacant_rooms || 0} Kosong`}
           icon={DoorOpen}
           trend="up"
           trendValue="+2.5%"
@@ -149,8 +158,8 @@ export function Dashboard() {
         />
         <StatCard
           title="Pendapatan Bulan Ini"
-          value={formatCurrency(stats?.monthlyRevenue || 0)}
-          subtitle={`${stats?.pendingPayments || 0} Pembayaran Tertunda`}
+          value={formatCurrency(stats?.monthly_revenue || 0)}
+          subtitle={`${stats?.pending_payments || 0} Pembayaran Tertunda`}
           icon={CreditCard}
           trend="up"
           trendValue="+5.2%"
@@ -158,7 +167,7 @@ export function Dashboard() {
         />
         <StatCard
           title="Total Penghuni"
-          value={stats?.totalTenants?.toString() || '0'}
+          value={stats?.total_tenants?.toString() || '0'}
           subtitle="Aktif"
           icon={Users}
           trend="neutral"
@@ -185,8 +194,8 @@ export function Dashboard() {
                 <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `${value / 1000000}M`} />
                 <Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ borderRadius: 8, border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
-                <Bar dataKey="roomRevenue" name="Sewa Kamar" fill="#1A3D5C" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="laundryRevenue" name="Laundry" fill="#D4A84B" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="room_revenue" name="Sewa Kamar" fill="#1A3D5C" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="laundry_revenue" name="Laundry" fill="#D4A84B" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -197,7 +206,7 @@ export function Dashboard() {
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-lg font-semibold">Tingkat Okupansi</CardTitle>
             <Badge variant="secondary" className="bg-blue-100 text-blue-700">
-              Rata-rata {formatPercentage(stats?.occupancyRate || 0)}
+              Rata-rata {formatPercentage(stats?.occupancy_rate || 0)}
             </Badge>
           </CardHeader>
           <CardContent>
@@ -262,7 +271,7 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Upcoming Tasks */}
+        {/* Upcoming Tasks - using snake_case property names */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-lg font-semibold">Tugas Mendatang</CardTitle>
@@ -273,7 +282,7 @@ export function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {/* Pending Payments */}
+              {/* Pending Payments - using snake_case */}
               {pendingPayments.length > 0 && (
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -282,34 +291,34 @@ export function Dashboard() {
                   <div className="flex-1">
                     <p className="text-sm font-medium text-gray-900">{pendingPayments.length} Pembayaran Tertunda</p>
                     <p className="text-xs text-gray-500">
-                      Total: {formatCurrency(pendingPayments.reduce((sum, p) => sum + p.totalAmount, 0))}
+                      Total: {formatCurrency(pendingPayments.reduce((sum, p) => sum + (p.total_amount || 0), 0))}
                     </p>
                   </div>
                 </div>
               )}
 
-              {/* Upcoming AC Cleaning */}
+              {/* Upcoming AC Cleaning - using snake_case */}
               {upcomingAC.map((ac) => (
                 <div key={ac.id} className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                     <Wind className="w-4 h-4 text-blue-600" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">AC Cleaning Kamar {ac.roomId}</p>
-                    <p className="text-xs text-gray-500">Jadwal: {new Date(ac.nextCleaningDate).toLocaleDateString('id-ID')}</p>
+                    <p className="text-sm font-medium text-gray-900">AC Cleaning Kamar {ac.room_id}</p>
+                    <p className="text-xs text-gray-500">Jadwal: {new Date(ac.next_cleaning_date).toLocaleDateString('id-ID')}</p>
                   </div>
                 </div>
               ))}
 
-              {/* Maintenance Requests */}
+              {/* Maintenance Requests - using snake_case */}
               {maintenanceRequests.map((req) => (
                 <div key={req.id} className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
                     <Wrench className="w-4 h-4 text-orange-600" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">Perbaikan: {req.issueType}</p>
-                    <p className="text-xs text-gray-500">Kamar {req.roomId} - {req.priority}</p>
+                    <p className="text-sm font-medium text-gray-900">Perbaikan: {req.issue_type}</p>
+                    <p className="text-xs text-gray-500">Kamar {req.room_id} - {req.priority}</p>
                   </div>
                 </div>
               ))}
@@ -318,7 +327,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* Quick Actions */}
+      {/* Quick Actions - fixed navigation */}
       <Card className="bg-gradient-to-r from-[#1A3D5C] to-[#4A6D8C]">
         <CardContent className="p-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -327,19 +336,19 @@ export function Dashboard() {
               <p className="text-white/70 text-sm">Akses fitur yang sering digunakan</p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={() => window.location.href = '#/tenants'}>
+              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={handleAddTenant}>
                 <Plus className="w-4 h-4 mr-2" />
                 Tambah Penghuni
               </Button>
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={() => window.location.href = '#/payments'}>
+              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={handleGoToPayments}>
                 <CreditCard className="w-4 h-4 mr-2" />
                 Catat Pembayaran
               </Button>
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={() => window.location.href = '#/expenses'}>
+              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={handleGoToExpenses}>
                 <Receipt className="w-4 h-4 mr-2" />
                 Catat Pengeluaran
               </Button>
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={() => window.location.href = '#/laundry'}>
+              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0" onClick={handleGoToLaundry}>
                 <Shirt className="w-4 h-4 mr-2" />
                 Input Laundry
               </Button>

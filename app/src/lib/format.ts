@@ -135,14 +135,16 @@ export function getExpenseTypeLabel(type: string): string {
 }
 
 // Maintenance issue type label mapper
+// In app/src/lib/format.ts
+
 export function getIssueTypeLabel(type: string): string {
   const labels: Record<string, string> = {
-    ac: 'AC',
-    plumbing: 'Plumbing',
-    electrical: 'Listrik',
-    furniture: 'Furniture',
-    painting: 'Pengecatan',
-    other: 'Lainnya',
+    'ac': 'AC',
+    'plumbing': 'Air dan Instalasi',
+    'electrical': 'Kelistrikan',
+    'furniture': 'Mebel',
+    'painting': 'Cat',
+    'other': 'Lainnya',
   };
   return labels[type] || type;
 }

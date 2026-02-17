@@ -1,5 +1,3 @@
-// app/src/pages/Properties.tsx
-
 import { useState, useEffect } from 'react';
 import { Plus, Search, Building2, MapPin, Phone, Eye, Edit, Trash2, MoreHorizontal } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -37,6 +35,7 @@ export function Properties() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
+  // Form state - using snake_case to match database, with property_manager_id
   const [formData, setFormData] = useState({
     name: '',
     property_type: 'male' as 'male' | 'female' | 'mixed',
@@ -59,11 +58,13 @@ export function Properties() {
     status: 'active',
   });
 
+  // Fetch current user and data on mount
   useEffect(() => {
     const loadUser = async () => {
       const user = await getCurrentUser();
       if (user) {
         setCurrentUser(user);
+        // Set property_manager_id to current user when creating new property
         setFormData(prev => ({ ...prev, property_manager_id: user.id }));
       }
     };
@@ -87,32 +88,21 @@ export function Properties() {
     }
   };
 
-  // 🔧 FIXED: Robust room status handling
-  const getRoomStats = (propertyId: string) => {
-    
-    const propertyRooms = rooms.filter(r => r.property_id === propertyId);
-    const normalize = (s: string) => (s || '').toLowerCase().trim();
-
-    const occupied = propertyRooms.filter(r =>
-      ['occupied', 'terisi'].includes(normalize(r.status))
-    ).length;
-
-    const vacant = propertyRooms.filter(r =>
-      ['vacant', 'available', 'kosong'].includes(normalize(r.status))
-    ).length;
-
-    const maintenance = propertyRooms.filter(r =>
-      ['maintenance', 'perawatan', 'under_maintenance'].includes(normalize(r.status))
-    ).length;
-
-    return { total: propertyRooms.length, occupied, vacant, maintenance };
-  };
-
+  // Filter properties - using snake_case
   const filteredProperties = properties.filter(property =>
     property.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     property.address?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     property.city?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Get room stats - using snake_case
+  const getRoomStats = (propertyId: string) => {
+    const propertyRooms = rooms.filter(r => r.property_id === propertyId);
+    const occupied = propertyRooms.filter(r => r.status === 'occupied').length;
+    const vacant = propertyRooms.filter(r => r.status === 'available').length;
+    const maintenance = propertyRooms.filter(r => r.status === 'maintenance').length;
+    return { total: propertyRooms.length, occupied, vacant, maintenance };
+  };
 
   const getPropertyTypeBadge = (type: string) => {
     const configs: Record<string, { label: string; color: string }> = {
@@ -184,11 +174,14 @@ export function Properties() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Validation
     if (!formData.property_manager_id) {
       toast.error('Property Manager ID tidak ditemukan. Silakan login ulang.');
       return;
     }
 
+    console.log('Form data being submitted:', JSON.stringify(formData, null, 2));
+    
     try {
       if (isEditMode && selectedProperty) {
         await propertiesAPI.update(selectedProperty.id, formData);
@@ -246,7 +239,7 @@ export function Properties() {
         <Input type="text" placeholder="Cari properti..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
       </div>
 
-      {/* Properties Grid */}
+      {/* Properties Grid - using snake_case */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredProperties.map((property) => {
           const stats = getRoomStats(property.id);
@@ -308,7 +301,7 @@ export function Properties() {
         })}
       </div>
 
-      {/* Add/Edit Dialog */}
+      {/* Add/Edit Dialog - using snake_case */}
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -413,7 +406,7 @@ export function Properties() {
         </DialogContent>
       </Dialog>
 
-      {/* Detail Dialog */}
+      {/* Detail Dialog - using snake_case */}
       <Dialog open={!!selectedProperty && !isAddDialogOpen} onOpenChange={() => setSelectedProperty(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
           {selectedProperty && (

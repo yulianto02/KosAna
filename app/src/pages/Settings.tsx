@@ -9,32 +9,33 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { settingsAPI } from '@/services/api';
+import { getCurrentUser } from '@/services/auth';
 
 export function Settings() {
   const [saving, setSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [settings, setSettings] = useState({
-    businessName: 'Kos Ana Management',
-    businessEmail: 'admin@kosana.id',
-    businessPhone: '081234567890',
-    businessAddress: 'Jl. Kebayoran Lama No. 45',
+    business_name: 'Kos Ana Management',
+    business_email: 'admin@kosana.id',
+    business_phone: '081234567890',
+    business_address: 'Jl. Kebayoran Lama No. 45',
     timezone: 'WIB',
     language: 'id',
     currency: 'IDR',
-    qrisProvider: 'xendit',
-    qrisApiKey: '',
-    qrisSandbox: false,
-    lateFeePercentage: 5,
-    gracePeriod: 3,
-    emailPaymentReceived: true,
-    emailPaymentPending: true,
-    emailMaintenanceRequest: true,
-    emailACCleaningReminder: true,
-    whatsappProvider: '360dialog',
-    whatsappApiKey: '',
-    whatsappPhoneNumberId: '',
-    whatsappConnected: false,
-    twoFAEnabled: false,
+    qris_provider: 'xendit',
+    qris_api_key: '',
+    qris_sandbox: false,
+    late_fee_percentage: 5,
+    grace_period: 3,
+    email_payment_received: true,
+    email_payment_pending: true,
+    email_maintenance_request: true,
+    email_ac_cleaning_reminder: true,
+    whatsapp_provider: '360dialog',
+    whatsapp_api_key: '',
+    whatsapp_phone_number_id: '',
+    whatsapp_connected: false,
+    two_fa_enabled: false,
   });
 
   // Fetch settings on mount
@@ -59,7 +60,11 @@ export function Settings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await settingsAPI.update(settings);
+      // getCurrentUser is async, so we need to await it
+      const user = await getCurrentUser();
+      const updatedBy = user?.id || 'system';
+      
+      await settingsAPI.update(settings, updatedBy);
       toast.success('Pengaturan berhasil disimpan');
     } catch (error) {
       toast.error('Gagal menyimpan pengaturan');
@@ -120,36 +125,36 @@ export function Settings() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="businessName">Nama Bisnis</Label>
+                    <Label htmlFor="business_name">Nama Bisnis</Label>
                     <Input 
-                      id="businessName" 
-                      value={settings.businessName}
-                      onChange={(e) => handleChange('businessName', e.target.value)}
+                      id="business_name" 
+                      value={settings.business_name}
+                      onChange={(e) => handleChange('business_name', e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="businessEmail">Email Bisnis</Label>
+                    <Label htmlFor="business_email">Email Bisnis</Label>
                     <Input 
-                      id="businessEmail" 
+                      id="business_email" 
                       type="email" 
-                      value={settings.businessEmail}
-                      onChange={(e) => handleChange('businessEmail', e.target.value)}
+                      value={settings.business_email}
+                      onChange={(e) => handleChange('business_email', e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="businessPhone">Telepon Bisnis</Label>
+                    <Label htmlFor="business_phone">Telepon Bisnis</Label>
                     <Input 
-                      id="businessPhone" 
-                      value={settings.businessPhone}
-                      onChange={(e) => handleChange('businessPhone', e.target.value)}
+                      id="business_phone" 
+                      value={settings.business_phone}
+                      onChange={(e) => handleChange('business_phone', e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="businessAddress">Alamat</Label>
+                    <Label htmlFor="business_address">Alamat</Label>
                     <Input 
-                      id="businessAddress" 
-                      value={settings.businessAddress}
-                      onChange={(e) => handleChange('businessAddress', e.target.value)}
+                      id="business_address" 
+                      value={settings.business_address}
+                      onChange={(e) => handleChange('business_address', e.target.value)}
                     />
                   </div>
                 </div>
@@ -222,27 +227,27 @@ export function Settings() {
                   <Label>Provider QRIS</Label>
                   <select 
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg"
-                    value={settings.qrisProvider}
-                    onChange={(e) => handleChange('qrisProvider', e.target.value)}
+                    value={settings.qris_provider}
+                    onChange={(e) => handleChange('qris_provider', e.target.value)}
                   >
                     <option value="xendit">Xendit</option>
                     <option value="duitku">Duitku</option>
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="apiKey">API Key</Label>
+                  <Label htmlFor="qris_api_key">API Key</Label>
                   <Input 
-                    id="apiKey" 
+                    id="qris_api_key" 
                     type="password" 
-                    value={settings.qrisApiKey}
-                    onChange={(e) => handleChange('qrisApiKey', e.target.value)}
+                    value={settings.qris_api_key}
+                    onChange={(e) => handleChange('qris_api_key', e.target.value)}
                     placeholder="Masukkan API Key"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="callbackUrl">Callback URL</Label>
+                  <Label htmlFor="callback_url">Callback URL</Label>
                   <Input 
-                    id="callbackUrl" 
+                    id="callback_url" 
                     value="https://kosana.id/webhooks/payment" 
                     readOnly 
                   />
@@ -253,8 +258,8 @@ export function Settings() {
                     <p className="text-sm text-gray-500">Gunakan mode testing untuk pembayaran</p>
                   </div>
                   <Switch 
-                    checked={settings.qrisSandbox}
-                    onCheckedChange={(checked) => handleChange('qrisSandbox', checked)}
+                    checked={settings.qris_sandbox}
+                    onCheckedChange={(checked) => handleChange('qris_sandbox', checked)}
                   />
                 </div>
               </CardContent>
@@ -266,21 +271,21 @@ export function Settings() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="lateFeePercentage">Persentase Denda Keterlambatan (%)</Label>
+                  <Label htmlFor="late_fee_percentage">Persentase Denda Keterlambatan (%)</Label>
                   <Input 
-                    id="lateFeePercentage" 
+                    id="late_fee_percentage" 
                     type="number" 
-                    value={settings.lateFeePercentage}
-                    onChange={(e) => handleChange('lateFeePercentage', parseInt(e.target.value))}
+                    value={settings.late_fee_percentage}
+                    onChange={(e) => handleChange('late_fee_percentage', parseInt(e.target.value))}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="gracePeriod">Masa Tenggang (hari)</Label>
+                  <Label htmlFor="grace_period">Masa Tenggang (hari)</Label>
                   <Input 
-                    id="gracePeriod" 
+                    id="grace_period" 
                     type="number" 
-                    value={settings.gracePeriod}
-                    onChange={(e) => handleChange('gracePeriod', parseInt(e.target.value))}
+                    value={settings.grace_period}
+                    onChange={(e) => handleChange('grace_period', parseInt(e.target.value))}
                   />
                 </div>
               </CardContent>
@@ -303,8 +308,8 @@ export function Settings() {
                     <p className="text-sm text-gray-500">Kirim email saat pembayaran masuk</p>
                   </div>
                   <Switch 
-                    checked={settings.emailPaymentReceived}
-                    onCheckedChange={(checked) => handleChange('emailPaymentReceived', checked)}
+                    checked={settings.email_payment_received}
+                    onCheckedChange={(checked) => handleChange('email_payment_received', checked)}
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -313,8 +318,8 @@ export function Settings() {
                     <p className="text-sm text-gray-500">Kirim email saat ada pembayaran tertunda</p>
                   </div>
                   <Switch 
-                    checked={settings.emailPaymentPending}
-                    onCheckedChange={(checked) => handleChange('emailPaymentPending', checked)}
+                    checked={settings.email_payment_pending}
+                    onCheckedChange={(checked) => handleChange('email_payment_pending', checked)}
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -323,8 +328,8 @@ export function Settings() {
                     <p className="text-sm text-gray-500">Kirim email saat ada request perawatan baru</p>
                   </div>
                   <Switch 
-                    checked={settings.emailMaintenanceRequest}
-                    onCheckedChange={(checked) => handleChange('emailMaintenanceRequest', checked)}
+                    checked={settings.email_maintenance_request}
+                    onCheckedChange={(checked) => handleChange('email_maintenance_request', checked)}
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -333,8 +338,8 @@ export function Settings() {
                     <p className="text-sm text-gray-500">Kirim email reminder jadwal AC</p>
                   </div>
                   <Switch 
-                    checked={settings.emailACCleaningReminder}
-                    onCheckedChange={(checked) => handleChange('emailACCleaningReminder', checked)}
+                    checked={settings.email_ac_cleaning_reminder}
+                    onCheckedChange={(checked) => handleChange('email_ac_cleaning_reminder', checked)}
                   />
                 </div>
               </CardContent>
@@ -355,35 +360,35 @@ export function Settings() {
                   <Label>Provider</Label>
                   <select 
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg"
-                    value={settings.whatsappProvider}
-                    onChange={(e) => handleChange('whatsappProvider', e.target.value)}
+                    value={settings.whatsapp_provider}
+                    onChange={(e) => handleChange('whatsapp_provider', e.target.value)}
                   >
                     <option value="360dialog">360dialog</option>
                     <option value="meta">Meta Cloud API</option>
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="waApiKey">API Key</Label>
+                  <Label htmlFor="whatsapp_api_key">API Key</Label>
                   <Input 
-                    id="waApiKey" 
+                    id="whatsapp_api_key" 
                     type="password" 
-                    value={settings.whatsappApiKey}
-                    onChange={(e) => handleChange('whatsappApiKey', e.target.value)}
+                    value={settings.whatsapp_api_key}
+                    onChange={(e) => handleChange('whatsapp_api_key', e.target.value)}
                     placeholder="Masukkan API Key"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="phoneNumberId">Phone Number ID</Label>
+                  <Label htmlFor="whatsapp_phone_number_id">Phone Number ID</Label>
                   <Input 
-                    id="phoneNumberId" 
-                    value={settings.whatsappPhoneNumberId}
-                    onChange={(e) => handleChange('whatsappPhoneNumberId', e.target.value)}
+                    id="whatsapp_phone_number_id" 
+                    value={settings.whatsapp_phone_number_id}
+                    onChange={(e) => handleChange('whatsapp_phone_number_id', e.target.value)}
                     placeholder="Masukkan Phone Number ID"
                   />
                 </div>
                 <div className="bg-blue-50 p-4 rounded-lg">
                   <p className="text-sm text-blue-700">
-                    <strong>Status:</strong> {settings.whatsappConnected ? 'Terhubung' : 'Belum Terhubung'}
+                    <strong>Status:</strong> {settings.whatsapp_connected ? 'Terhubung' : 'Belum Terhubung'}
                   </p>
                   <p className="text-sm text-blue-600">
                     Nomor: +62 812-3456-7890
@@ -426,16 +431,16 @@ export function Settings() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="currentPassword">Password Saat Ini</Label>
-                  <Input id="currentPassword" type="password" />
+                  <Label htmlFor="current_password">Password Saat Ini</Label>
+                  <Input id="current_password" type="password" />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="newPassword">Password Baru</Label>
-                  <Input id="newPassword" type="password" />
+                  <Label htmlFor="new_password">Password Baru</Label>
+                  <Input id="new_password" type="password" />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Konfirmasi Password</Label>
-                  <Input id="confirmPassword" type="password" />
+                  <Label htmlFor="confirm_password">Konfirmasi Password</Label>
+                  <Input id="confirm_password" type="password" />
                 </div>
                 <Button 
                   className="bg-[#1A3D5C] hover:bg-[#0F2744]"
@@ -457,8 +462,8 @@ export function Settings() {
                     <p className="text-sm text-gray-500">Tambahkan lapisan keamanan ekstra</p>
                   </div>
                   <Switch 
-                    checked={settings.twoFAEnabled}
-                    onCheckedChange={(checked) => handleChange('twoFAEnabled', checked)}
+                    checked={settings.two_fa_enabled}
+                    onCheckedChange={(checked) => handleChange('two_fa_enabled', checked)}
                   />
                 </div>
               </CardContent>

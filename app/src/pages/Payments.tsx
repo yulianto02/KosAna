@@ -25,6 +25,8 @@ export function Payments() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [activeTab, setActiveTab] = useState('all');
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string>(''); // '' = all properties
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(''); // '' = all periods (YYYY-MM format)
   const [payments, setPayments] = useState<Payment[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -32,23 +34,67 @@ export function Payments() {
   const [isLoading, setIsLoading] = useState(false);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Form state
+  // Helper to format stored "YYYY-MM" → "Februari 2026"
+  const formatPaymentPeriod = (period: string | undefined): string => {
+    if (!period) return '-';
+    const match = period.match(/^(\d{4})-(\d{2})$/);
+    if (match) {
+      const year = parseInt(match[1]);
+      const month = parseInt(match[2]);
+      const date = new Date(year, month - 1, 1);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+      }
+    }
+    return period; // fallback for any unexpected format
+  };
+
+  // Form state (snake_case to match DB)
   const [formData, setFormData] = useState({
-    tenantId: '',
-    propertyId: '',
-    roomId: '',
-    paymentPeriod: '',
-    baseAmount: 0,
-    additionalPersonFee: 0,
-    laundryAmount: 0,
-    lateFee: 0,
-    totalAmount: 0,
-    dueDate: new Date().toISOString().split('T')[0],
-    paymentStatus: 'pending' as 'pending' | 'paid' | 'overdue',
-    paymentMethod: 'cash' as 'cash' | 'bank_transfer' | 'qris',
+    tenant_id: '',
+    property_id: '',
+    room_id: '',
+    payment_period: '',
+    base_amount: 0,
+    additional_person_fee: 0,
+    laundry_amount: 0,
+    late_fee: 0,
+    total_amount: 0,
+    due_date: new Date().toISOString().split('T')[0],
+    payment_status: 'pending' as 'pending' | 'paid' | 'overdue',
+    payment_method: 'qris' as 'cash' | 'bank_transfer' | 'qris',
     notes: '',
   });
+
+  // Set default payment_period to current month in YYYY-MM format
+  const resetForm = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    setFormData({
+      tenant_id: '',
+      property_id: '',
+      room_id: '',
+      payment_period: `${year}-${month}`,
+      base_amount: 0,
+      additional_person_fee: 0,
+      laundry_amount: 0,
+      late_fee: 0,
+      total_amount: 0,
+      due_date: new Date().toISOString().split('T')[0],
+      payment_status: 'pending',
+      payment_method: 'qris',
+      notes: '',
+    });
+  };
+
+  // Filter tenants based on selected property (for add dialog)
+  const filteredTenants = tenants.filter(t => 
+    t && t.status === 'active' && 
+    (formData.property_id ? t.property_id === formData.property_id : true)
+  );
 
   // Fetch data on mount
   useEffect(() => {
@@ -57,6 +103,7 @@ export function Payments() {
 
   const fetchData = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const [paymentsRes, tenantsRes, roomsRes, propertiesRes] = await Promise.all([
         paymentsAPI.getAll(),
@@ -64,74 +111,139 @@ export function Payments() {
         roomsAPI.getAll(),
         propertiesAPI.getAll(),
       ]);
+      
+      if (!Array.isArray(paymentsRes) || !Array.isArray(tenantsRes) || 
+          !Array.isArray(roomsRes) || !Array.isArray(propertiesRes)) {
+        throw new Error('Invalid data format');
+      }
+      
       setPayments(paymentsRes);
       setTenants(tenantsRes);
       setRooms(roomsRes);
       setProperties(propertiesRes);
     } catch (error) {
+      console.error('Error fetching data:', error);
+      setError(error instanceof Error ? error.message : 'Gagal memuat data');
       toast.error('Gagal memuat data');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Filter payments
+  // Filtered payments with property, period, search, and tab filters
   const filteredPayments = payments.filter(payment => {
-    const tenant = tenants.find(t => t.id === payment.tenantId);
-    const matchesSearch = 
-      tenant?.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      payment.paymentPeriod.includes(searchQuery);
+    if (!payment || !payment.tenant_id) return false;
     
-    if (activeTab === 'all') return matchesSearch;
-    if (activeTab === 'paid') return matchesSearch && payment.paymentStatus === 'paid';
-    if (activeTab === 'pending') return matchesSearch && payment.paymentStatus === 'pending';
-    if (activeTab === 'overdue') return matchesSearch && payment.paymentStatus === 'overdue';
-    return matchesSearch;
+    // Property filter
+    if (selectedPropertyId && payment.property_id !== selectedPropertyId) {
+      return false;
+    }
+    
+    // Period filter (exact YYYY-MM match)
+    if (selectedPeriod && payment.payment_period !== selectedPeriod) {
+      return false;
+    }
+    
+    // Search filter (tenant name, displayed period, stored period)
+    const tenant = tenants.find(t => t && t.id === payment.tenant_id);
+    const searchLower = searchQuery.toLowerCase();
+    const tenantName = tenant?.full_name?.toLowerCase() || '';
+    const periodDisplay = formatPaymentPeriod(payment.payment_period);
+    const periodLower = periodDisplay.toLowerCase();
+    const periodStoredLower = (payment.payment_period || '').toLowerCase();
+    
+    const matchesSearch = 
+      tenantName.includes(searchLower) ||
+      periodLower.includes(searchLower) ||
+      periodStoredLower.includes(searchLower);
+    
+    if (!matchesSearch) return false;
+    
+    // Tab filter
+    if (activeTab === 'all') return true;
+    if (activeTab === 'paid') return payment.payment_status === 'paid';
+    if (activeTab === 'pending') return payment.payment_status === 'pending';
+    if (activeTab === 'overdue') return payment.payment_status === 'overdue';
+    return false;
   });
 
-  // Calculate totals
-  const totalPaid = payments.filter(p => p.paymentStatus === 'paid').reduce((sum, p) => sum + p.totalAmount, 0);
-  const totalPending = payments.filter(p => p.paymentStatus === 'pending').reduce((sum, p) => sum + p.totalAmount, 0);
-  const totalOverdue = payments.filter(p => p.paymentStatus === 'overdue').reduce((sum, p) => sum + p.totalAmount, 0);
+  // Totals based on CURRENT FILTERS (more accurate for user context)
+  const totalPaid = filteredPayments
+    .filter(p => p.payment_status === 'paid')
+    .reduce((sum, p) => sum + (Number(p.total_amount) || 0), 0);
+  const totalPending = filteredPayments
+    .filter(p => p.payment_status === 'pending')
+    .reduce((sum, p) => sum + (Number(p.total_amount) || 0), 0);
+  const totalOverdue = filteredPayments
+    .filter(p => p.payment_status === 'overdue')
+    .reduce((sum, p) => sum + (Number(p.total_amount) || 0), 0);
 
-  // Reset form
-  const resetForm = () => {
-    setFormData({
-      tenantId: '',
-      propertyId: '',
-      roomId: '',
-      paymentPeriod: new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }),
-      baseAmount: 0,
-      additionalPersonFee: 0,
-      laundryAmount: 0,
-      lateFee: 0,
-      totalAmount: 0,
-      dueDate: new Date().toISOString().split('T')[0],
-      paymentStatus: 'pending',
-      paymentMethod: 'cash',
-      notes: '',
-    });
+  // Handle property change IN ADD DIALOG FORM (not filter)
+  const handlePropertyChange = (propertyId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      property_id: propertyId,
+      tenant_id: '',
+      room_id: '',
+      base_amount: 0,
+      additional_person_fee: 0,
+      total_amount: 0,
+    }));
   };
 
-  // Handle tenant selection
+  // Handle tenant change IN ADD DIALOG FORM
   const handleTenantChange = (tenantId: string) => {
-    const tenant = tenants.find(t => t.id === tenantId);
+    if (!tenantId) {
+      setFormData(prev => ({
+        ...prev,
+        tenant_id: '',
+        room_id: '',
+        base_amount: 0,
+        additional_person_fee: 0,
+        total_amount: 0,
+      }));
+      return;
+    }
+    
+    const tenant = tenants.find(t => t && t.id === tenantId);
     if (tenant) {
-      setFormData({
-        ...formData,
-        tenantId,
-        propertyId: tenant.propertyId,
-        roomId: tenant.roomId,
-        baseAmount: tenant.baseMonthlyRent,
-        additionalPersonFee: tenant.isSharedRoom ? tenant.additionalPersonFee : 0,
-        totalAmount: tenant.totalMonthlyRent,
-      });
+      setFormData(prev => ({
+        ...prev,
+        tenant_id: tenantId,
+        property_id: tenant.property_id || prev.property_id,
+        room_id: tenant.room_id || '',
+        base_amount: Number(tenant.base_monthly_rent) || 0,
+        additional_person_fee: tenant.is_shared_room ? (Number(tenant.additional_person_fee) || 0) : 0,
+        total_amount: Number(tenant.total_monthly_rent) || 0,
+      }));
     }
   };
 
   // Handle add payment
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!formData.tenant_id) {
+      toast.error('Pilih penghuni terlebih dahulu');
+      return;
+    }
+    if (!formData.property_id) {
+      toast.error('Pilih properti terlebih dahulu');
+      return;
+    }
+    if (!formData.room_id) {
+      toast.error('Kamar tidak ditemukan untuk penghuni ini');
+      return;
+    }
+    if (!formData.payment_period) {
+      toast.error('Periode pembayaran wajib diisi');
+      return;
+    }
+    if (!formData.due_date) {
+      toast.error('Tanggal jatuh tempo wajib diisi');
+      return;
+    }
+    
     try {
       await paymentsAPI.create(formData);
       toast.success('Tagihan berhasil dibuat');
@@ -139,26 +251,28 @@ export function Payments() {
       resetForm();
       fetchData();
     } catch (error) {
+      console.error('Error creating payment:', error);
       toast.error('Gagal membuat tagihan');
     }
   };
 
-  // Handle mark as paid
+  // Mark as paid
   const handleMarkPaid = async () => {
-    if (!selectedPayment) return;
+    if (!selectedPayment?.id) return;
     try {
       await paymentsAPI.markPaid(selectedPayment.id);
       toast.success('Pembayaran berhasil ditandai lunas');
       setSelectedPayment(null);
       fetchData();
     } catch (error) {
+      console.error('Error marking paid:', error);
       toast.error('Gagal menandai pembayaran');
     }
   };
 
-  // Handle delete payment
+  // Delete payment
   const handleDelete = async () => {
-    if (!selectedPayment) return;
+    if (!selectedPayment?.id) return;
     try {
       await paymentsAPI.delete(selectedPayment.id);
       toast.success('Tagihan berhasil dihapus');
@@ -166,18 +280,44 @@ export function Payments() {
       setSelectedPayment(null);
       fetchData();
     } catch (error) {
+      console.error('Error deleting payment:', error);
       toast.error('Gagal menghapus tagihan');
     }
   };
 
-  // Open delete dialog
   const openDeleteDialog = () => {
     setIsDeleteDialogOpen(true);
   };
 
+  // Error state
+  if (error && !isLoading && payments.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Pembayaran</h1>
+            <p className="text-gray-500">Kelola pembayaran sewa dan tagihan</p>
+          </div>
+        </div>
+        <Card className="bg-red-50 border-red-200">
+          <CardContent className="p-6">
+            <div className="text-center">
+              <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-red-800 mb-2">Terjadi Kesalahan</h3>
+              <p className="text-red-600 mb-4">{error}</p>
+              <Button onClick={fetchData} className="bg-[#1A3D5C] hover:bg-[#0F2744]">
+                Coba Lagi
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Page Header */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Pembayaran</h1>
@@ -189,13 +329,14 @@ export function Payments() {
             resetForm();
             setIsAddDialogOpen(true);
           }}
+          disabled={isLoading}
         >
           <Plus className="w-4 h-4 mr-2" />
           Buat Tagihan
         </Button>
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats - NOW FILTER-AWARE */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="bg-green-50 border-green-200">
           <CardContent className="p-5">
@@ -238,19 +379,53 @@ export function Payments() {
         </Card>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="relative flex-1 max-w-md">
+      {/* FILTERS BAR - NEW SECTION */}
+      <div className="flex flex-wrap items-end gap-4">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[220px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <Input
             type="text"
-            placeholder="Cari pembayaran..."
+            placeholder="Cari nama penghuni atau periode..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10"
+            disabled={isLoading}
           />
         </div>
-        <Button variant="outline">
+
+        {/* Property Filter */}
+        <div className="min-w-[220px]">
+          <Label htmlFor="property-filter" className="text-sm mb-1 block">Properti</Label>
+          <select
+            id="property-filter"
+            value={selectedPropertyId}
+            onChange={(e) => setSelectedPropertyId(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
+            disabled={isLoading}
+          >
+            <option value="">Semua Properti</option>
+            {properties.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Period Filter */}
+        <div className="min-w-[180px]">
+          <Label htmlFor="period-filter" className="text-sm mb-1 block">Bulan & Tahun</Label>
+          <Input
+            id="period-filter"
+            type="month"
+            value={selectedPeriod}
+            onChange={(e) => setSelectedPeriod(e.target.value)}
+            className="w-full"
+            disabled={isLoading}
+          />
+        </div>
+
+        {/* Export Button */}
+        <Button variant="outline" disabled={isLoading} className="h-[38px]">
           <Download className="w-4 h-4 mr-2" />
           Export
         </Button>
@@ -266,7 +441,6 @@ export function Payments() {
         </TabsList>
 
         <TabsContent value={activeTab}>
-          {/* Loading State */}
           {isLoading && (
             <div className="text-center py-12">
               <div className="animate-spin w-8 h-8 border-2 border-[#1A3D5C] border-t-transparent rounded-full mx-auto mb-4" />
@@ -291,8 +465,12 @@ export function Payments() {
                   </thead>
                   <tbody className="divide-y">
                     {filteredPayments.map((payment) => {
-                      const tenant = tenants.find(t => t.id === payment.tenantId);
-                      const room = rooms.find(r => r.id === payment.roomId);
+                      if (!payment) return null;
+                      
+                      const tenant = tenants.find(t => t && t.id === payment.tenant_id);
+                      const room = rooms.find(r => r && r.id === payment.room_id);
+                      const property = properties.find(p => p && p.id === payment.property_id);
+                      
                       return (
                         <tr 
                           key={payment.id} 
@@ -300,45 +478,47 @@ export function Payments() {
                           onClick={() => setSelectedPayment(payment)}
                         >
                           <td className="px-4 py-3">
-                            <p className="font-medium text-gray-900">{tenant?.fullName}</p>
-                          </td>
-                          <td className="px-4 py-3">
-                            <p className="font-medium">{room?.roomNumber}</p>
-                            <p className="text-xs text-gray-500">
-                              {properties.find(p => p.id === payment.propertyId)?.name}
+                            <p className="font-medium text-gray-900">
+                              {tenant?.full_name || 'Unknown'}
                             </p>
                           </td>
                           <td className="px-4 py-3">
-                            {payment.paymentPeriod}
+                            <p className="font-medium">{room?.room_number || '-'}</p>
+                            <p className="text-xs text-gray-500">
+                              {property?.name || '-'}
+                            </p>
+                          </td>
+                          <td className="px-4 py-3">
+                            {formatPaymentPeriod(payment.payment_period)}
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <p className="font-medium">{formatCurrency(payment.totalAmount)}</p>
-                            {payment.lateFee > 0 && (
+                            <p className="font-medium">{formatCurrency(Number(payment.total_amount) || 0)}</p>
+                            {Number(payment.late_fee) > 0 && (
                               <p className="text-xs text-red-500">
-                                +Denda: {formatCurrency(payment.lateFee)}
+                                +Denda: {formatCurrency(Number(payment.late_fee))}
                               </p>
                             )}
-                            {payment.laundryAmount > 0 && (
+                            {Number(payment.laundry_amount) > 0 && (
                               <p className="text-xs text-blue-500">
-                                +Laundry: {formatCurrency(payment.laundryAmount)}
+                                +Laundry: {formatCurrency(Number(payment.laundry_amount))}
                               </p>
                             )}
                           </td>
                           <td className="px-4 py-3">
-                            <Badge className={cn("text-white", getPaymentStatusColor(payment.paymentStatus))}>
-                              {getPaymentStatusLabel(payment.paymentStatus)}
+                            <Badge className={cn("text-white", getPaymentStatusColor(payment.payment_status))}>
+                              {getPaymentStatusLabel(payment.payment_status)}
                             </Badge>
                           </td>
                           <td className="px-4 py-3">
-                            {formatDate(payment.dueDate)}
+                            {formatDate(payment.due_date)}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1">
-                              {payment.paymentMethod === 'qris' && <QrCode className="w-4 h-4" />}
-                              {payment.paymentMethod === 'bank_transfer' && <CreditCard className="w-4 h-4" />}
+                              {payment.payment_method === 'qris' && <QrCode className="w-4 h-4" />}
+                              {payment.payment_method === 'bank_transfer' && <CreditCard className="w-4 h-4" />}
                               <span className="capitalize">
-                                {payment.paymentMethod === 'qris' ? 'QRIS' : 
-                                 payment.paymentMethod === 'bank_transfer' ? 'Transfer' : 'Tunai'}
+                                {payment.payment_method === 'qris' ? 'QRIS' : 
+                                 payment.payment_method === 'bank_transfer' ? 'Transfer' : 'Tunai'}
                               </span>
                             </div>
                           </td>
@@ -351,14 +531,16 @@ export function Payments() {
             </Card>
           )}
 
-          {/* Empty State */}
           {!isLoading && filteredPayments.length === 0 && (
             <div className="text-center py-12 bg-gray-50 rounded-lg">
-              <p className="text-gray-500">Tidak ada pembayaran ditemukan</p>
+              <p className="text-gray-500">Tidak ada pembayaran ditemukan sesuai filter</p>
               <Button 
                 variant="outline" 
                 className="mt-4"
-                onClick={() => setIsAddDialogOpen(true)}
+                onClick={() => {
+                  resetForm();
+                  setIsAddDialogOpen(true);
+                }}
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Buat Tagihan
@@ -368,7 +550,7 @@ export function Payments() {
         </TabsContent>
       </Tabs>
 
-      {/* Add Payment Dialog */}
+      {/* Add Dialog - PRESERVED FROM ORIGINAL */}
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -378,63 +560,91 @@ export function Payments() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAdd} className="space-y-4">
+            {/* Property */}
             <div className="space-y-2">
-              <Label htmlFor="tenant">Penghuni *</Label>
+              <Label htmlFor="property">Properti *</Label>
               <select
-                id="tenant"
-                value={formData.tenantId}
-                onChange={(e) => handleTenantChange(e.target.value)}
+                id="property"
+                value={formData.property_id}
+                onChange={(e) => handlePropertyChange(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
-                <option value="">Pilih Penghuni</option>
-                {tenants.filter(t => t.status === 'active').map(t => (
-                  <option key={t.id} value={t.id}>{t.fullName}</option>
+                <option value="">Pilih Properti</option>
+                {properties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
             </div>
 
+            {/* Tenant */}
             <div className="space-y-2">
-              <Label htmlFor="paymentPeriod">Periode Pembayaran *</Label>
+              <Label htmlFor="tenant">Penghuni *</Label>
+              <select
+                id="tenant"
+                value={formData.tenant_id}
+                onChange={(e) => handleTenantChange(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
+                required
+                disabled={!formData.property_id}
+              >
+                <option value="">
+                  {formData.property_id ? 'Pilih Penghuni' : 'Pilih Properti Dulu'}
+                </option>
+                {filteredTenants.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.full_name || 'Unknown'} - Kamar {t.room_id ? (rooms.find(r => r.id === t.room_id)?.room_number || '-') : '-'}
+                  </option>
+                ))}
+              </select>
+              {formData.property_id && filteredTenants.length === 0 && (
+                <p className="text-xs text-orange-600">Tidak ada penghuni aktif di properti ini</p>
+              )}
+            </div>
+
+            {/* Period - month picker */}
+            <div className="space-y-2">
+              <Label htmlFor="payment_period">Periode Pembayaran *</Label>
               <Input
-                id="paymentPeriod"
-                value={formData.paymentPeriod}
-                onChange={(e) => setFormData({ ...formData, paymentPeriod: e.target.value })}
-                placeholder="Contoh: Januari 2026"
+                id="payment_period"
+                type="month"
+                value={formData.payment_period}
+                onChange={(e) => setFormData(prev => ({ ...prev, payment_period: e.target.value }))}
                 required
               />
             </div>
 
+            {/* Amounts */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="baseAmount">Sewa Dasar (Rp)</Label>
+                <Label htmlFor="base_amount">Sewa Dasar (Rp)</Label>
                 <Input
-                  id="baseAmount"
+                  id="base_amount"
                   type="number"
-                  value={formData.baseAmount}
+                  value={formData.base_amount}
                   onChange={(e) => {
-                    const baseAmount = parseInt(e.target.value) || 0;
-                    setFormData({ 
-                      ...formData, 
-                      baseAmount,
-                      totalAmount: baseAmount + formData.additionalPersonFee + formData.laundryAmount + formData.lateFee
-                    });
+                    const base_amount = parseInt(e.target.value) || 0;
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      base_amount,
+                      total_amount: base_amount + prev.additional_person_fee + prev.laundry_amount + prev.late_fee
+                    }));
                   }}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="additionalPersonFee">Tambahan Orang (Rp)</Label>
+                <Label htmlFor="additional_person_fee">Tambahan Orang (Rp)</Label>
                 <Input
-                  id="additionalPersonFee"
+                  id="additional_person_fee"
                   type="number"
-                  value={formData.additionalPersonFee}
+                  value={formData.additional_person_fee}
                   onChange={(e) => {
-                    const additionalPersonFee = parseInt(e.target.value) || 0;
-                    setFormData({ 
-                      ...formData, 
-                      additionalPersonFee,
-                      totalAmount: formData.baseAmount + additionalPersonFee + formData.laundryAmount + formData.lateFee
-                    });
+                    const additional_person_fee = parseInt(e.target.value) || 0;
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      additional_person_fee,
+                      total_amount: prev.base_amount + additional_person_fee + prev.laundry_amount + prev.late_fee
+                    }));
                   }}
                 />
               </div>
@@ -442,72 +652,72 @@ export function Payments() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="laundryAmount">Laundry (Rp)</Label>
+                <Label htmlFor="laundry_amount">Laundry (Rp)</Label>
                 <Input
-                  id="laundryAmount"
+                  id="laundry_amount"
                   type="number"
-                  value={formData.laundryAmount}
+                  value={formData.laundry_amount}
                   onChange={(e) => {
-                    const laundryAmount = parseInt(e.target.value) || 0;
-                    setFormData({ 
-                      ...formData, 
-                      laundryAmount,
-                      totalAmount: formData.baseAmount + formData.additionalPersonFee + laundryAmount + formData.lateFee
-                    });
+                    const laundry_amount = parseInt(e.target.value) || 0;
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      laundry_amount,
+                      total_amount: prev.base_amount + prev.additional_person_fee + laundry_amount + prev.late_fee
+                    }));
                   }}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="lateFee">Denda (Rp)</Label>
+                <Label htmlFor="late_fee">Denda (Rp)</Label>
                 <Input
-                  id="lateFee"
+                  id="late_fee"
                   type="number"
-                  value={formData.lateFee}
+                  value={formData.late_fee}
                   onChange={(e) => {
-                    const lateFee = parseInt(e.target.value) || 0;
-                    setFormData({ 
-                      ...formData, 
-                      lateFee,
-                      totalAmount: formData.baseAmount + formData.additionalPersonFee + formData.laundryAmount + lateFee
-                    });
+                    const late_fee = parseInt(e.target.value) || 0;
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      late_fee,
+                      total_amount: prev.base_amount + prev.additional_person_fee + prev.laundry_amount + late_fee
+                    }));
                   }}
                 />
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="totalAmount">Total Tagihan (Rp)</Label>
+              <Label htmlFor="total_amount">Total Tagihan (Rp)</Label>
               <Input
-                id="totalAmount"
+                id="total_amount"
                 type="number"
-                value={formData.totalAmount}
+                value={formData.total_amount}
                 readOnly
                 className="bg-gray-50 font-bold"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="dueDate">Jatuh Tempo *</Label>
+              <Label htmlFor="due_date">Jatuh Tempo *</Label>
               <Input
-                id="dueDate"
+                id="due_date"
                 type="date"
-                value={formData.dueDate}
-                onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                value={formData.due_date}
+                onChange={(e) => setFormData(prev => ({ ...prev, due_date: e.target.value }))}
                 required
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="paymentMethod">Metode Pembayaran</Label>
+              <Label htmlFor="payment_method">Metode Pembayaran</Label>
               <select
-                id="paymentMethod"
-                value={formData.paymentMethod}
-                onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value as 'cash' | 'bank_transfer' | 'qris' })}
+                id="payment_method"
+                value={formData.payment_method}
+                onChange={(e) => setFormData(prev => ({ ...prev, payment_method: e.target.value as 'cash' | 'bank_transfer' | 'qris' }))}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
               >
-                <option value="cash">Tunai</option>
-                <option value="bank_transfer">Transfer Bank</option>
                 <option value="qris">QRIS</option>
+                <option value="bank_transfer">Transfer Bank</option>
+                <option value="cash">Tunai</option>
               </select>
             </div>
 
@@ -516,7 +726,7 @@ export function Payments() {
               <textarea
                 id="notes"
                 value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 rows={2}
               />
@@ -534,93 +744,91 @@ export function Payments() {
         </DialogContent>
       </Dialog>
 
-      {/* Payment Detail Dialog */}
+      {/* Detail Dialog - PRESERVED FROM ORIGINAL */}
       <Dialog open={!!selectedPayment && !isDeleteDialogOpen} onOpenChange={() => setSelectedPayment(null)}>
         <DialogContent className="max-w-lg">
           {selectedPayment && (
             <>
               <DialogHeader>
                 <DialogTitle>Detail Pembayaran</DialogTitle>
-                <DialogDescription>
-                  Informasi lengkap pembayaran
-                </DialogDescription>
+                <DialogDescription>Informasi lengkap pembayaran</DialogDescription>
               </DialogHeader>
 
               <div className="space-y-4">
                 {(() => {
-                  const tenant = tenants.find(t => t.id === selectedPayment.tenantId);
-                  const room = rooms.find(r => r.id === selectedPayment.roomId);
+                  const tenant = tenants.find(t => t && t.id === selectedPayment.tenant_id);
+                  const room = rooms.find(r => r && r.id === selectedPayment.room_id);
                   return (
                     <>
                       <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
                         <div>
                           <p className="text-sm text-gray-500">Total Tagihan</p>
                           <p className="text-2xl font-bold text-gray-900">
-                            {formatCurrency(selectedPayment.totalAmount)}
+                            {formatCurrency(Number(selectedPayment.total_amount) || 0)}
                           </p>
                         </div>
-                        <Badge className={cn("text-white text-sm px-3 py-1", getPaymentStatusColor(selectedPayment.paymentStatus))}>
-                          {getPaymentStatusLabel(selectedPayment.paymentStatus)}
+                        <Badge className={cn("text-white text-sm px-3 py-1", getPaymentStatusColor(selectedPayment.payment_status))}>
+                          {getPaymentStatusLabel(selectedPayment.payment_status)}
                         </Badge>
                       </div>
 
                       <div className="space-y-3">
                         <div className="flex justify-between">
                           <span className="text-gray-500">Penghuni</span>
-                          <span className="font-medium">{tenant?.fullName}</span>
+                          <span className="font-medium">{tenant?.full_name || '-'}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Kamar</span>
-                          <span className="font-medium">{room?.roomNumber}</span>
+                          <span className="font-medium">{room?.room_number || '-'}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Periode</span>
-                          <span className="font-medium">{selectedPayment.paymentPeriod}</span>
+                          <span className="font-medium">{formatPaymentPeriod(selectedPayment.payment_period)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Sewa Kamar</span>
-                          <span>{formatCurrency(selectedPayment.baseAmount)}</span>
+                          <span>{formatCurrency(Number(selectedPayment.base_amount) || 0)}</span>
                         </div>
-                        {selectedPayment.additionalPersonFee > 0 && (
+                        {Number(selectedPayment.additional_person_fee) > 0 && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Tambahan Orang</span>
-                            <span>{formatCurrency(selectedPayment.additionalPersonFee)}</span>
+                            <span>{formatCurrency(Number(selectedPayment.additional_person_fee))}</span>
                           </div>
                         )}
-                        {selectedPayment.laundryAmount > 0 && (
+                        {Number(selectedPayment.laundry_amount) > 0 && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Laundry</span>
-                            <span>{formatCurrency(selectedPayment.laundryAmount)}</span>
+                            <span>{formatCurrency(Number(selectedPayment.laundry_amount))}</span>
                           </div>
                         )}
-                        {selectedPayment.lateFee > 0 && (
+                        {Number(selectedPayment.late_fee) > 0 && (
                           <div className="flex justify-between text-red-600">
                             <span>Denda Keterlambatan</span>
-                            <span>{formatCurrency(selectedPayment.lateFee)}</span>
+                            <span>{formatCurrency(Number(selectedPayment.late_fee))}</span>
                           </div>
                         )}
                         <div className="border-t pt-2 flex justify-between font-semibold">
                           <span>Total</span>
-                          <span>{formatCurrency(selectedPayment.totalAmount)}</span>
+                          <span>{formatCurrency(Number(selectedPayment.total_amount) || 0)}</span>
                         </div>
                       </div>
 
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
                           <span className="text-gray-500">Jatuh Tempo</span>
-                          <span>{formatDate(selectedPayment.dueDate)}</span>
+                          <span>{formatDate(selectedPayment.due_date)}</span>
                         </div>
-                        {selectedPayment.paymentDate && (
+                        {selectedPayment.payment_date && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Tanggal Bayar</span>
-                            <span>{formatDate(selectedPayment.paymentDate)}</span>
+                            <span>{formatDate(selectedPayment.payment_date)}</span>
                           </div>
                         )}
                         <div className="flex justify-between">
                           <span className="text-gray-500">Metode Pembayaran</span>
                           <span className="capitalize">
-                            {selectedPayment.paymentMethod === 'qris' ? 'QRIS' : 
-                             selectedPayment.paymentMethod === 'bank_transfer' ? 'Transfer Bank' : 'Tunai'}
+                            {selectedPayment.payment_method === 'qris' ? 'QRIS' : 
+                             selectedPayment.payment_method === 'bank_transfer' ? 'Transfer Bank' : 'Tunai'}
                           </span>
                         </div>
                       </div>
@@ -641,7 +849,7 @@ export function Payments() {
                   <Trash2 className="w-4 h-4 mr-2" />
                   Hapus
                 </Button>
-                {selectedPayment.paymentStatus === 'pending' && (
+                {selectedPayment.payment_status === 'pending' && (
                   <Button 
                     className="bg-green-600 hover:bg-green-700"
                     onClick={handleMarkPaid}
@@ -656,13 +864,13 @@ export function Payments() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Confirmation - PRESERVED FROM ORIGINAL */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Konfirmasi Hapus</DialogTitle>
             <DialogDescription>
-              Apakah Anda yakin ingin menghapus tagihan untuk periode <strong>{selectedPayment?.paymentPeriod}</strong>? 
+              Apakah Anda yakin ingin menghapus tagihan untuk periode <strong>{formatPaymentPeriod(selectedPayment?.payment_period)}</strong>? 
               Tindakan ini tidak dapat dibatalkan.
             </DialogDescription>
           </DialogHeader>

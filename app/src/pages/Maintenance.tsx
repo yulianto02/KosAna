@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, CheckCircle, Clock, AlertCircle, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,12 @@ import type { MaintenanceRequest, Property, Room } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate, getIssueTypeLabel, getPriorityLabel, getPriorityColor } from '@/lib/format';
 
+// Indonesian month names for localization
+const INDONESIAN_MONTHS = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
 export function Maintenance() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<MaintenanceRequest | null>(null);
@@ -30,18 +36,50 @@ export function Maintenance() {
   const [isLoading, setIsLoading] = useState(false);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  // New filter states
+  const [selectedProperty, setSelectedProperty] = useState('all');
+  const [selectedMonth, setSelectedMonth] = useState('all');
 
-  // Form state
+  // Form state - using camelCase for form inputs but will convert to snake_case for API
   const [formData, setFormData] = useState({
     propertyId: '',
     roomId: '',
-    issueType: 'plumbing' as 'plumbing' | 'electrical' | 'furniture' | 'appliance' | 'structural' | 'other',
+    issueType: 'ac' as 'ac' | 'plumbing' | 'electrical' | 'furniture' | 'painting' | 'other',
     priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent',
     description: '',
     technicianName: '',
     estimatedCost: 0,
     notes: '',
   });
+  
+  // Generate month options for last 12 months + "All"
+  const monthOptions = useMemo(() => {
+    const options = [{ label: 'Semua Bulan', value: 'all' }];
+    const today = new Date();
+    
+    // Generate last 12 months (current month first)
+    for (let i = 0; i < 12; i++) {
+      const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const year = date.getFullYear();
+      const monthIndex = date.getMonth();
+      const monthName = INDONESIAN_MONTHS[monthIndex];
+      const value = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+      options.push({ label: `${monthName} ${year}`, value });
+    }
+    
+    return options;
+  }, []);
+
+  // Generate property options with "All" option
+  const propertyOptions = useMemo(() => {
+    return [
+      { label: 'Semua Properti', value: 'all' },
+      ...properties.map(p => ({ 
+        label: p.name, 
+        value: p.id 
+      }))
+    ];
+  }, [properties]);
 
   // Fetch data on mount
   useEffect(() => {
@@ -66,47 +104,94 @@ export function Maintenance() {
     }
   };
 
-  // Filter requests
-  const filteredRequests = maintenanceRequests.filter(request => {
-    const room = rooms.find(r => r.id === request.roomId);
-    const matchesSearch = 
-      room?.roomNumber.includes(searchQuery) ||
-      request.description.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    if (activeTab === 'all') return matchesSearch;
-    if (activeTab === 'reported') return matchesSearch && request.status === 'reported';
-    if (activeTab === 'in_progress') return matchesSearch && request.status === 'in_progress';
-    if (activeTab === 'completed') return matchesSearch && request.status === 'completed';
-    return matchesSearch;
-  });
+  // Filter requests with new property and month filters
+  const filteredRequests = useMemo(() => {
+    return maintenanceRequests.filter(request => {
+      // Property filter
+      if (selectedProperty !== 'all' && request.property_id !== selectedProperty) {
+        return false;
+      }
 
-  // Calculate stats
+      // Month filter
+      if (selectedMonth !== 'all') {
+        if (!request.request_date) return false;
+        if (!request.request_date.startsWith(selectedMonth)) return false;
+      }
+
+      // Existing search filter
+      const room = rooms.find(r => r.id === request.room_id);
+      const matchesSearch = 
+        (room?.room_number?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) || 
+        request.description.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      // Tab filter
+      if (activeTab === 'all') return matchesSearch;
+      if (activeTab === 'reported') return matchesSearch && request.status === 'reported';
+      if (activeTab === 'in_progress') return matchesSearch && request.status === 'in_progress';
+      if (activeTab === 'completed') return matchesSearch && request.status === 'completed';
+      return matchesSearch;
+    });
+  }, [maintenanceRequests, selectedProperty, selectedMonth, searchQuery, activeTab, rooms]);
+
+  // Calculate stats - FIXED: use snake_case property names
   const pendingRequests = maintenanceRequests.filter(r => r.status === 'reported' || r.status === 'in_progress').length;
   const urgentRequests = maintenanceRequests.filter(r => r.priority === 'urgent' && r.status !== 'completed').length;
   const completedThisMonth = maintenanceRequests.filter(r => 
     r.status === 'completed' && 
-    r.actualCompletion && 
-    new Date(r.actualCompletion).getMonth() === new Date().getMonth()
+    r.actual_completion &&
+    new Date(r.actual_completion).getMonth() === new Date().getMonth() &&
+    new Date(r.actual_completion).getFullYear() === new Date().getFullYear()
   ).length;
 
-  // Handle add request
+  // Handle add request - FIXED: convert camelCase to snake_case for API
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await maintenanceAPI.create(formData);
+      // Convert camelCase form data to snake_case for PostgreSQL
+      const apiData = {
+        property_id: formData.propertyId,
+        room_id: formData.roomId,
+        issue_type: formData.issueType,
+        priority: formData.priority,
+        description: formData.description,
+        technician_name: formData.technicianName || null,
+        cost: formData.estimatedCost || 0,
+        notes: formData.notes || null,
+        request_date: new Date().toISOString().split('T')[0],
+        status: 'reported',
+      };
+      
+      await maintenanceAPI.create(apiData);
       toast.success('Request perawatan berhasil dibuat');
       setIsAddDialogOpen(false);
+      // Reset form
+      setFormData({
+        propertyId: '',
+        roomId: '',
+        issueType: 'plumbing',
+        priority: 'medium',
+        description: '',
+        technicianName: '',
+        estimatedCost: 0,
+        notes: '',
+      });
       fetchData();
     } catch (error) {
       toast.error('Gagal membuat request');
     }
   };
 
-  // Handle complete request
+  // Handle complete request - FIXED: send proper data to API
   const handleComplete = async () => {
     if (!selectedRequest) return;
     try {
-      await maintenanceAPI.complete(selectedRequest.id);
+      // Send completion data with snake_case keys
+      const completeData = {
+        actual_completion: new Date().toISOString().split('T')[0],
+        cost: selectedRequest.cost || 0,
+      };
+      
+      await maintenanceAPI.complete(selectedRequest.id, completeData);
       toast.success('Request perawatan selesai');
       setSelectedRequest(null);
       fetchData();
@@ -191,6 +276,41 @@ export function Maintenance() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-4">
+        {/* Property Filter */}
+        <div className="min-w-[200px]">
+          <Label htmlFor="property-filter" className="sr-only">Properti</Label>
+          <select
+            id="property-filter"
+            value={selectedProperty}
+            onChange={(e) => setSelectedProperty(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C] bg-white"
+          >
+            {propertyOptions.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Month Filter */}
+        <div className="min-w-[200px]">
+          <Label htmlFor="month-filter" className="sr-only">Bulan</Label>
+          <select
+            id="month-filter"
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C] bg-white"
+          >
+            {monthOptions.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Search */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <Input
@@ -238,7 +358,7 @@ export function Maintenance() {
                   </thead>
                   <tbody className="divide-y">
                     {filteredRequests.map((request) => {
-                      const room = rooms.find(r => r.id === request.roomId);
+                      const room = rooms.find(r => r.id === request.room_id);
                       return (
                         <tr 
                           key={request.id} 
@@ -246,13 +366,13 @@ export function Maintenance() {
                           onClick={() => setSelectedRequest(request)}
                         >
                           <td className="px-4 py-3">
-                            <p className="font-medium">{room?.roomNumber}</p>
+                            <p className="font-medium">{room?.room_number}</p>
                             <p className="text-xs text-gray-500">
-                              {properties.find(p => p.id === request.propertyId)?.name}
+                              {properties.find(p => p.id === request.property_id)?.name}
                             </p>
                           </td>
                           <td className="px-4 py-3">
-                            <Badge variant="outline">{getIssueTypeLabel(request.issueType)}</Badge>
+                            <Badge variant="outline">{getIssueTypeLabel(request.issue_type)}</Badge>
                           </td>
                           <td className="px-4 py-3">
                             <span className="text-sm text-gray-600 line-clamp-1">{request.description}</span>
@@ -275,10 +395,10 @@ export function Maintenance() {
                             </Badge>
                           </td>
                           <td className="px-4 py-3">
-                            <p>{formatDate(request.requestDate)}</p>
-                            {request.actualCompletion && (
+                            <p>{formatDate(request.request_date)}</p>
+                            {request.actual_completion && (
                               <p className="text-xs text-green-600">
-                                Selesai: {formatDate(request.actualCompletion)}
+                                Selesai: {formatDate(request.actual_completion)}
                               </p>
                             )}
                           </td>
@@ -349,10 +469,11 @@ export function Maintenance() {
                 onChange={(e) => setFormData({ ...formData, roomId: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
+                disabled={!formData.propertyId}
               >
                 <option value="">Pilih Kamar</option>
-                {rooms.filter(r => r.propertyId === formData.propertyId).map(r => (
-                  <option key={r.id} value={r.id}>{r.roomNumber}</option>
+                {rooms.filter(r => r.property_id === formData.propertyId).map(r => (
+                  <option key={r.id} value={r.id}>{r.room_number}</option>
                 ))}
               </select>
             </div>
@@ -362,15 +483,15 @@ export function Maintenance() {
               <select
                 id="issueType"
                 value={formData.issueType}
-                onChange={(e) => setFormData({ ...formData, issueType: e.target.value as 'plumbing' | 'electrical' | 'furniture' | 'appliance' | 'structural' | 'other' })}
+                onChange={(e) => setFormData({ ...formData, issueType: e.target.value as 'ac' | 'plumbing' | 'electrical' | 'furniture' | 'painting' | 'other' })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 required
               >
-                <option value="plumbing">Plumbing (Air)</option>
-                <option value="electrical">Listrik</option>
-                <option value="furniture">Furniture</option>
-                <option value="appliance">Peralatan</option>
-                <option value="structural">Struktural</option>
+                <option value="ac">AC</option>
+                <option value="plumbing">Air dan Instalasi (Plumbing)</option>
+                <option value="electrical">Kelistrikan</option>
+                <option value="furniture">Mebel</option>
+                <option value="painting">Cat</option>
                 <option value="other">Lainnya</option>
               </select>
             </div>
@@ -400,6 +521,7 @@ export function Maintenance() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 rows={3}
                 required
+                placeholder="Jelaskan detail masalah..."
               />
             </div>
 
@@ -409,6 +531,7 @@ export function Maintenance() {
                 id="technicianName"
                 value={formData.technicianName}
                 onChange={(e) => setFormData({ ...formData, technicianName: e.target.value })}
+                placeholder="Nama teknisi yang ditugaskan (opsional)"
               />
             </div>
 
@@ -418,7 +541,8 @@ export function Maintenance() {
                 id="estimatedCost"
                 type="number"
                 value={formData.estimatedCost}
-                onChange={(e) => setFormData({ ...formData, estimatedCost: parseInt(e.target.value) })}
+                onChange={(e) => setFormData({ ...formData, estimatedCost: parseInt(e.target.value) || 0 })}
+                placeholder="0"
               />
             </div>
 
@@ -430,6 +554,7 @@ export function Maintenance() {
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]"
                 rows={2}
+                placeholder="Catatan tambahan (opsional)"
               />
             </div>
 
@@ -459,7 +584,7 @@ export function Maintenance() {
 
               <div className="space-y-4">
                 {(() => {
-                  const room = rooms.find(r => r.id === selectedRequest.roomId);
+                  const room = rooms.find(r => r.id === selectedRequest.room_id);
                   return (
                     <>
                       <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
@@ -486,26 +611,26 @@ export function Maintenance() {
                       <div className="space-y-3">
                         <div className="flex justify-between">
                           <span className="text-gray-500">Kamar</span>
-                          <span className="font-medium">{room?.roomNumber}</span>
+                          <span className="font-medium">{room?.room_number}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Jenis Masalah</span>
-                          <Badge variant="outline">{getIssueTypeLabel(selectedRequest.issueType)}</Badge>
+                          <Badge variant="outline">{getIssueTypeLabel(selectedRequest.issue_type)}</Badge>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Tanggal Lapor</span>
-                          <span>{formatDate(selectedRequest.requestDate)}</span>
+                          <span>{formatDate(selectedRequest.request_date)}</span>
                         </div>
-                        {selectedRequest.actualCompletion && (
+                        {selectedRequest.actual_completion && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Tanggal Selesai</span>
-                            <span>{formatDate(selectedRequest.actualCompletion)}</span>
+                            <span>{formatDate(selectedRequest.actual_completion)}</span>
                           </div>
                         )}
-                        {selectedRequest.technicianName && (
+                        {selectedRequest.technician_name && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Teknisi</span>
-                            <span>{selectedRequest.technicianName}</span>
+                            <span>{selectedRequest.technician_name}</span>
                           </div>
                         )}
                         {selectedRequest.cost > 0 && (
