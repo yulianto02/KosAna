@@ -144,6 +144,12 @@ app.get('/api/dashboard/stats', asyncHandler(async (req, res) => {
   const properties = await propertyRepository.findAll();
   const rooms = await roomRepository.findAll();
   const tenants = await tenantRepository.findAll('active');
+
+  console.log('Properties count:', properties.length);
+  console.log('Rooms count:', rooms.length);
+  console.log('Active tenants count:', tenants.length);
+  console.log('First property (if any):', properties[0] || 'none');
+  console.log('First room status (if any):', rooms[0]?.status || 'none');
   
   const occupiedRooms = rooms.filter(r => r.status === 'occupied').length;
   const vacantRooms = rooms.filter(r => r.status === 'available').length;
@@ -164,16 +170,28 @@ app.get('/api/dashboard/stats', asyncHandler(async (req, res) => {
   const occupancyRate = rooms.length > 0 ? (occupiedRooms / rooms.length) * 100 : 0;
 
   res.json({
-    totalProperties: properties.length,
-    totalRooms: rooms.length,
-    occupiedRooms,
-    vacantRooms,
-    totalTenants: tenants.length,
-    monthlyRevenue: parseFloat(monthlyRevenue) || 0,
-    monthlyExpenses: parseFloat(monthlyExpenses) || 0,
-    pendingPayments,
-    occupancyRate: Math.round(occupancyRate * 10) / 10
+    total_properties: properties.length,
+    total_rooms: rooms.length,
+    occupied_rooms: occupiedRooms,
+    vacant_rooms: vacantRooms,
+    total_tenants: tenants.length,
+    monthly_revenue: parseFloat(monthlyRevenue) || 0,
+    monthly_expenses: parseFloat(monthlyExpenses) || 0,
+    pending_payments: (await paymentRepository.findAll({ status: 'pending' })).length,
+    occupancy_rate: rooms.length > 0 ? Math.round((occupiedRooms / rooms.length) * 1000) / 10 : 0
   });
+
+  // res.json({
+  //   totalProperties: properties.length,
+  //   totalRooms: rooms.length,
+  //   occupiedRooms,
+  //   vacantRooms,
+  //   totalTenants: tenants.length,
+  //   monthlyRevenue: parseFloat(monthlyRevenue) || 0,
+  //   monthlyExpenses: parseFloat(monthlyExpenses) || 0,
+  //   pendingPayments,
+  //   occupancyRate: Math.round(occupancyRate * 10) / 10
+  // });
 }));
 
 // ==================== PROPERTIES ====================
