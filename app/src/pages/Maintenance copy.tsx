@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Search, CheckCircle, Clock, AlertCircle, Trash2, CalendarIcon } from 'lucide-react';
+import { Plus, Search, CheckCircle, Clock, AlertCircle, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,18 +15,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Calendar } from '@/components/ui/calendar';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import { maintenanceAPI, propertiesAPI, roomsAPI } from '@/services/api';
 import type { MaintenanceRequest, Property, Room } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate, getIssueTypeLabel, getPriorityLabel, getPriorityColor } from '@/lib/format';
-import { format } from 'date-fns';
-import { id } from 'date-fns/locale';
 
 // Indonesian month names for localization
 const INDONESIAN_MONTHS = [
@@ -58,7 +50,6 @@ export function Maintenance() {
     technicianName: '',
     estimatedCost: 0,
     notes: '',
-    requestDate: new Date(), // Added date field with default today
   });
   
   // Generate month options for last 12 months + "All"
@@ -166,7 +157,7 @@ export function Maintenance() {
         technician_name: formData.technicianName || null,
         cost: formData.estimatedCost || 0,
         notes: formData.notes || null,
-        request_date: formData.requestDate.toISOString().split('T')[0], // Use selected date
+        request_date: new Date().toISOString().split('T')[0],
         status: 'reported',
       };
       
@@ -183,7 +174,6 @@ export function Maintenance() {
         technicianName: '',
         estimatedCost: 0,
         notes: '',
-        requestDate: new Date(), // Reset to today
       });
       fetchData();
     } catch (error) {
@@ -455,38 +445,6 @@ export function Maintenance() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAdd} className="space-y-4">
-            {/* Date Picker - NEW FIELD */}
-            <div className="space-y-2">
-              <Label htmlFor="requestDate">Tanggal Request *</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start text-left font-normal",
-                      !formData.requestDate && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {formData.requestDate ? (
-                      format(formData.requestDate, "PPP", { locale: id })
-                    ) : (
-                      <span>Pilih tanggal</span>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start" >
-                  <Calendar
-                    mode="single"
-                    selected={formData.requestDate}
-                    onSelect={(date) => date && setFormData({ ...formData, requestDate: date })}
-                    initialFocus 
-                    className="p-3 [&_.rdp-cell]:w-10 [&_.rdp-cell]:h-10"
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-
             <div className="space-y-2">
               <Label htmlFor="property">Properti *</Label>
               <select

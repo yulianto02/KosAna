@@ -92,9 +92,15 @@ export const logout = (): void => {
 };
 
 // Get current user
-export const getCurrentUser = async (): Promise<AuthResponse['user'] | null> => {
+
+// Get current user
+export const getCurrentUser = async (): Promise<AuthResponse['user']> => {
   const token = getToken();
-  if (!token) return null;
+  if (!token) {
+    const error = new Error('No token found') as any;
+    error.response = { status: 401 };
+    throw error;
+  }
   
   try {
     const response = await fetch(`${API_BASE_URL}/auth/me`, {
@@ -104,17 +110,30 @@ export const getCurrentUser = async (): Promise<AuthResponse['user'] | null> => 
     });
     
     if (!response.ok) {
-      if (response.status === 401) {
+      // Create error with status code for Layout.tsx to handle
+      const error = new Error('Failed to get user') as any;
+      error.response = { status: response.status };
+      
+      if (response.status === 401 || response.status === 403) {
+        // Clear invalid token
         removeToken();
-        return null;
+        localStorage.removeItem('kosana_user');
+        error.message = 'Session expired';
       }
-      throw new Error('Failed to get user');
+      
+      throw error;
     }
     
     return await response.json();
-  } catch (error) {
-    console.error('Get current user error:', error);
-    return null;
+  } catch (error: any) {
+    // If it's already our custom error with status, re-throw it
+    if (error.response?.status) {
+      throw error;
+    }
+    // For network errors or other issues, create a generic error
+    const networkError = new Error('Failed to get user') as any;
+    networkError.response = { status: 500 };
+    throw networkError;
   }
 };
 

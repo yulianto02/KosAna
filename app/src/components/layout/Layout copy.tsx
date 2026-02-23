@@ -24,7 +24,6 @@ const routeToPage: Record<string, string> = {
 export function Layout() {
   const [collapsed, setCollapsed] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true); // Added loading state
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -32,29 +31,15 @@ export function Layout() {
   const currentPage = routeToPage[location.pathname] || 'dashboard';
 
   useEffect(() => {
-
+    // Load current user on mount
     const loadUser = async () => {
-      setIsLoading(true);
-      try {
-        const user = await getCurrentUser();
+      const user = await getCurrentUser();
+      if (user) {
         setCurrentUser(user);
-      } catch (error: any) {
-        // Check for 401 (no token or expired) or 403 (invalid token)
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          console.log('Session expired or not authenticated, redirecting to login...');
-          setCurrentUser(null);
-          navigate('/login');
-        } else {
-          console.error('Failed to load user:', error);
-          // For other errors, you might want to show an error message or still redirect
-          setCurrentUser(null);
-        }
-      } finally {
-        setIsLoading(false);
       }
     };
     loadUser();
-  }, [navigate]); // Added navigate to dependency array
+  }, []);
 
   const handlePageChange = (pageId: string) => {
     const route = Object.keys(routeToPage).find(key => routeToPage[key] === pageId);
@@ -66,17 +51,7 @@ export function Layout() {
   const handleLogout = () => {
     logout();
     toast.success('Berhasil keluar');
-    navigate('/login'); // Also navigate to login on logout
   };
-
-  // Optional: Show loading spinner while checking auth
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin w-8 h-8 border-2 border-[#1A3D5C] border-t-transparent rounded-full" />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gray-50">
