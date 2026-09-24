@@ -10,6 +10,7 @@ import {
   Users,
   CreditCard,
   Receipt,
+  Sparkles,
   Shirt,
   Wrench,
   Wind,
@@ -22,7 +23,7 @@ import {
 } from 'lucide-react';
 
 // Page type for navigation
-type Page = 'dashboard' | 'properties' | 'rooms' | 'tenants' | 'payments' | 'expenses' | 'laundry' | 'maintenance' | 'ac-cleaning' | 'reports' | 'settings';
+type Page = 'dashboard' | 'properties' | 'rooms' | 'tenants' | 'payments' | 'expenses' | 'room-cleaning' | 'laundry' | 'maintenance' | 'ac-cleaning' | 'reports' | 'settings';
 
 interface SidebarProps {
   currentPage: Page;
@@ -44,6 +45,7 @@ const navItems: NavItem[] = [
   { id: 'tenants', label: 'Penghuni', icon: Users },
   { id: 'payments', label: 'Pembayaran', icon: CreditCard },
   { id: 'expenses', label: 'Pengeluaran', icon: Receipt },
+  { id: 'room-cleaning', label: 'Pembersihan Kamar', icon: Sparkles},
   { id: 'laundry', label: 'Laundry', icon: Shirt },
   { id: 'maintenance', label: 'Perawatan', icon: Wrench },
   { id: 'ac-cleaning', label: 'Jadwal AC', icon: Wind },

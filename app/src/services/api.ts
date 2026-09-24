@@ -1,7 +1,9 @@
 import { getToken, logout } from './auth';
+import { API_BASE_URL } from '../config/api';
+import type { RoomCleaningSchedule, CleaningStats } from '@/types';
 
 // app/src/services/api.ts
-const API_BASE_URL = 'http://192.168.0.171:3001/api';
+// const API_BASE_URL = 'http://192.168.0.171:3001/api';
 console.log('URL length:', API_BASE_URL.length);
 console.log('Last char code:', API_BASE_URL.charCodeAt(API_BASE_URL.length - 1));
 // const API_BASE_URL = 'http://192.168.0.171:3001/api';
@@ -155,6 +157,66 @@ export const expensesAPI = {
   }),
 };
 
+// ==================== ROOM CLEANING ====================
+
+// ==================== ROOM CLEANING ====================
+export const roomCleaningAPI = {
+  getAll: (propertyId: string, weekStart: string): Promise<RoomCleaningSchedule[]> => 
+    fetchAPI(`/room-cleaning?propertyId=${propertyId}&weekStart=${weekStart}`),
+  
+  getById: (id: string): Promise<RoomCleaningSchedule> => 
+    fetchAPI(`/room-cleaning/${id}`),
+  
+  create: (data: Partial<RoomCleaningSchedule>): Promise<RoomCleaningSchedule> => 
+    fetchAPI('/room-cleaning', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  
+  update: (id: string, data: Partial<RoomCleaningSchedule>): Promise<RoomCleaningSchedule> => 
+    fetchAPI(`/room-cleaning/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  
+  start: (id: string): Promise<RoomCleaningSchedule> => 
+    fetchAPI(`/room-cleaning/${id}/start`, {
+      method: 'POST',
+    }),
+  
+  complete: (id: string, notes?: string, actual_duration?: number): Promise<RoomCleaningSchedule> => 
+    fetchAPI(`/room-cleaning/${id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ notes, actual_duration }),
+    }),
+  
+  skip: (id: string, reason: string): Promise<RoomCleaningSchedule> => 
+    fetchAPI(`/room-cleaning/${id}/skip`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  
+  delete: (id: string): Promise<void> => 
+    fetchAPI(`/room-cleaning/${id}`, {
+      method: 'DELETE',
+    }),
+  
+  generate: (propertyId: string, weekStart: string): Promise<{ message: string; count: number }> => 
+    fetchAPI('/room-cleaning/generate', {
+      method: 'POST',
+      body: JSON.stringify({ propertyId, weekStart }),
+    }),
+  
+  getSlots: (propertyId: string, weekStart: string): Promise<any[]> => 
+    fetchAPI(`/room-cleaning/slots?propertyId=${propertyId}&weekStart=${weekStart}`),
+  
+  getStats: (propertyId: string, weekStart: string): Promise<CleaningStats> => 
+    fetchAPI(`/room-cleaning/stats?propertyId=${propertyId}&weekStart=${weekStart}`),
+  
+  getRoomHistory: (roomId: string): Promise<RoomCleaningSchedule[]> => 
+    fetchAPI(`/room-cleaning/room/${roomId}/history`),
+};
+
 // ==================== LAUNDRY ====================
 export const laundryAPI = {
   getAll: (status?: string): Promise<any[]> => 
@@ -268,4 +330,21 @@ export const reportsAPI = {
   getRevenue: (): Promise<any[]> => fetchAPI('/reports/revenue'),
   getOccupancy: (): Promise<any[]> => fetchAPI('/reports/occupancy'),
   getExpensesByCategory: (): Promise<any[]> => fetchAPI('/reports/expenses-by-category'),
+};
+
+// ==================== USERS ====================
+export const usersAPI = {
+  getAll: (): Promise<any[]> => fetchAPI('/users'),
+  getById: (id: string): Promise<any> => fetchAPI(`/users/${id}`),
+  create: (data: any): Promise<any> => fetchAPI('/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  update: (id: string, data: any): Promise<any> => fetchAPI(`/users/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  delete: (id: string): Promise<void> => fetchAPI(`/users/${id}`, {
+    method: 'DELETE',
+  }),
 };

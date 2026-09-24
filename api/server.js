@@ -18,6 +18,7 @@ const maintenanceRepository = require('./repositories/maintenanceRepository');
 const acCleaningRepository = require('./repositories/acCleaningRepository');
 const notificationRepository = require('./repositories/notificationRepository');
 const settingsRepository = require('./repositories/settingsRepository');
+const auditLogRepo = require('./repositories/auditLogRepository');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -386,6 +387,194 @@ app.post('/api/expenses/:id/reject', asyncHandler(async (req, res) => {
   res.json(updated);
 }));
 
+// ==================== ROOM CLEANING ====================
+// Room Cleaning Routes
+const roomCleaningRepo = require('./repositories/roomCleaningRepository');
+
+// Get cleaning schedule for property and week
+app.get('/api/room-cleaning', authenticateToken, asyncHandler(async (req, res) => {
+  const { propertyId, weekStart } = req.query;
+  
+  if (!propertyId || !weekStart) {
+    return res.status(400).json({ error: 'propertyId and weekStart are required' });
+  }
+  
+  const schedules = await roomCleaningRepo.findByPropertyAndWeek(propertyId, weekStart);
+  res.json(schedules);
+}));
+
+// Get single schedule
+app.get('/api/room-cleaning/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const schedule = await roomCleaningRepo.findById(req.params.id);
+  if (!schedule) {
+    return res.status(404).json({ error: 'Schedule not found' });
+  }
+  res.json(schedule);
+}));
+
+// Create new schedule
+app.post('/api/room-cleaning', authenticateToken, asyncHandler(async (req, res) => {
+  const { room_id, property_id, week_start_date, day_of_week, time_slot, assigned_to, notes } = req.body;
+  
+  // Calculate scheduled_date based on week_start, day_of_week, and time_slot
+  const weekStart = new Date(week_start_date);
+  const scheduledDate = new Date(weekStart);
+  scheduledDate.setDate(weekStart.getDate() + parseInt(day_of_week));
+  
+  // Set time based on slot (1-3: 09:00-11:00, 4-6: 13:00-15:00)
+  const hour = time_slot <= 3 ? 9 + (time_slot - 1) : 13 + (time_slot - 4);
+  scheduledDate.setHours(hour, 0, 0, 0);
+  
+  const schedule = await roomCleaningRepo.create({
+    room_id,
+    property_id,
+    week_start_date,
+    day_of_week: parseInt(day_of_week),
+    time_slot: parseInt(time_slot),
+    scheduled_date: scheduledDate.toISOString(),
+    assigned_to,
+    notes
+  });
+  
+  // Log audit
+  await auditLogRepo.create({
+    user_id: req.user.id,
+    action: 'CREATE',
+    table_name: 'room_cleaning_schedule',
+    record_id: schedule.id,
+    new_data: schedule
+  });
+  
+  res.status(201).json(schedule);
+}));
+
+// Update schedule
+app.put('/api/room-cleaning/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const updates = req.body;
+  
+  // If updating day/time, recalculate scheduled_date
+  if (updates.day_of_week !== undefined || updates.time_slot !== undefined) {
+    const existing = await roomCleaningRepo.findById(req.params.id);
+    const weekStart = new Date(existing.week_start_date);
+    const dayOfWeek = updates.day_of_week !== undefined ? parseInt(updates.day_of_week) : existing.day_of_week;
+    const timeSlot = updates.time_slot !== undefined ? parseInt(updates.time_slot) : existing.time_slot;
+    
+    const scheduledDate = new Date(weekStart);
+    scheduledDate.setDate(weekStart.getDate() + dayOfWeek);
+    const hour = timeSlot <= 3 ? 9 + (timeSlot - 1) : 13 + (timeSlot - 4);
+    scheduledDate.setHours(hour, 0, 0, 0);
+    
+    updates.scheduled_date = scheduledDate.toISOString();
+  }
+  
+  const schedule = await roomCleaningRepo.update(req.params.id, updates);
+  
+  await auditLogRepo.create({
+    user_id: req.user.id,
+    action: 'UPDATE',
+    table_name: 'room_cleaning_schedule',
+    record_id: req.params.id,
+    new_data: schedule
+  });
+  
+  res.json(schedule);
+}));
+
+// Mark as in progress
+app.post('/api/room-cleaning/:id/start', authenticateToken, asyncHandler(async (req, res) => {
+  const schedule = await roomCleaningRepo.markInProgress(req.params.id);
+  
+  await auditLogRepo.create({
+    user_id: req.user.id,
+    action: 'START',
+    table_name: 'room_cleaning_schedule',
+    record_id: req.params.id
+  });
+  
+  res.json(schedule);
+}));
+
+// Complete schedule
+app.post('/api/room-cleaning/:id/complete', authenticateToken, asyncHandler(async (req, res) => {
+  const { notes, actual_duration } = req.body;
+  const schedule = await roomCleaningRepo.complete(req.params.id, req.user.id, notes, actual_duration);
+  
+  await auditLogRepo.create({
+    user_id: req.user.id,
+    action: 'COMPLETE',
+    table_name: 'room_cleaning_schedule',
+    record_id: req.params.id
+  });
+  
+  res.json(schedule);
+}));
+
+// Skip schedule
+app.post('/api/room-cleaning/:id/skip', authenticateToken, asyncHandler(async (req, res) => {
+  const { reason } = req.body;
+  const schedule = await roomCleaningRepo.skip(req.params.id, reason);
+  
+  await auditLogRepo.create({
+    user_id: req.user.id,
+    action: 'SKIP',
+    table_name: 'room_cleaning_schedule',
+    record_id: req.params.id
+  });
+  
+  res.json(schedule);
+}));
+
+// Delete schedule
+app.delete('/api/room-cleaning/:id', authenticateToken, requireRole('admin'), asyncHandler(async (req, res) => {
+  await roomCleaningRepo.delete(req.params.id);
+  
+  await auditLogRepo.create({
+    user_id: req.user.id,
+    action: 'DELETE',
+    table_name: 'room_cleaning_schedule',
+    record_id: req.params.id
+  });
+  
+  res.json({ message: 'Schedule deleted' });
+}));
+
+// Generate weekly schedule
+app.post('/api/room-cleaning/generate', authenticateToken, asyncHandler(async (req, res) => {
+  const { propertyId, weekStart } = req.body;
+  const count = await roomCleaningRepo.generateSchedule(propertyId, weekStart);
+  
+  await auditLogRepo.create({
+    user_id: req.user.id,
+    action: 'GENERATE_SCHEDULE',
+    table_name: 'room_cleaning_schedule',
+    record_id: propertyId,
+    details: { week_start: weekStart, rooms_scheduled: count }
+  });
+  
+  res.json({ message: `${count} rooms scheduled`, count });
+}));
+
+// Get available slots
+app.get('/api/room-cleaning/slots', authenticateToken, asyncHandler(async (req, res) => {
+  const { propertyId, weekStart } = req.query;
+  const slots = await roomCleaningRepo.getAvailableSlots(propertyId, weekStart);
+  res.json(slots);
+}));
+
+// Get stats
+app.get('/api/room-cleaning/stats', authenticateToken, asyncHandler(async (req, res) => {
+  const { propertyId, weekStart } = req.query;
+  const stats = await roomCleaningRepo.getStats(propertyId, weekStart);
+  res.json(stats);
+}));
+
+// Get room cleaning history
+app.get('/api/room-cleaning/room/:roomId/history', authenticateToken, asyncHandler(async (req, res) => {
+  const history = await roomCleaningRepo.getRoomHistory(req.params.roomId);
+  res.json(history);
+}));
+
+
 // ==================== LAUNDRY ====================
 app.get('/api/laundry', asyncHandler(async (req, res) => {
   const { status } = req.query;
@@ -637,6 +826,14 @@ app.get('/api/reports/expenses-by-category', asyncHandler(async (req, res) => {
   }));
   
   res.json(data);
+}));
+
+// ==================== USERS ====================
+app.get('/api/users', authenticateToken, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'SELECT id, username, email, full_name, role, is_active, created_at FROM users WHERE is_active = true ORDER BY full_name, username'
+  );
+  res.json(result.rows);
 }));
 
 // ==================== ERROR HANDLING ====================

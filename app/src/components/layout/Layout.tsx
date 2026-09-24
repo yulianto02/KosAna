@@ -14,6 +14,7 @@ const routeToPage: Record<string, string> = {
   '/tenants': 'tenants',
   '/payments': 'payments',
   '/expenses': 'expenses',
+  '/room-cleaning': 'room-cleaning',
   '/laundry': 'laundry',
   '/maintenance': 'maintenance',
   '/ac-cleaning': 'ac-cleaning',

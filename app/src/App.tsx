@@ -9,6 +9,7 @@ import { Rooms } from '@/pages/Rooms';
 import { Tenants } from '@/pages/Tenants';
 import { Payments } from '@/pages/Payments';
 import { Expenses } from '@/pages/Expenses';
+import { RoomCleaning } from './pages/RoomCleaning';
 import { Laundry } from '@/pages/Laundry';
 import { Maintenance } from '@/pages/Maintenance';
 import { ACCleaning } from '@/pages/ACCleaning';
@@ -43,6 +44,7 @@ function App() {
           <Route path="tenants" element={<Tenants />} />
           <Route path="payments" element={<Payments />} />
           <Route path="expenses" element={<Expenses />} />
+          <Route path="room-cleaning" element={<RoomCleaning />} />
           <Route path="laundry" element={<Laundry />} />
           <Route path="maintenance" element={<Maintenance />} />
           <Route path="ac-cleaning" element={<ACCleaning />} />

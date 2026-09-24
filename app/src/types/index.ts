@@ -209,6 +209,52 @@ export interface Expense {
   updated_at: string;  // Changed from updatedAt
 }
 
+// Room Cleaning
+export interface RoomCleaningSchedule {
+  id: string;
+  room_id: string;
+  property_id: string;
+  week_start_date: string;
+  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  time_slot: 1 | 2 | 3 | 4 | 5 | 6;
+  scheduled_date: string;
+  status: 'scheduled' | 'in_progress' | 'completed' | 'skipped' | 'rescheduled';
+  assigned_to?: string;
+  estimated_duration_minutes: number;
+  actual_start_time?: string;
+  actual_end_time?: string;
+  notes?: string;
+  completed_by?: string;
+  completed_at?: string;
+  is_recurring: boolean;
+  created_at: string;
+  updated_at: string;
+  
+  // Joined fields
+  room_number?: string;
+  floor?: number;
+  property_name?: string;
+  assigned_username?: string;
+  assigned_name?: string;
+  completed_by_name?: string;
+}
+
+export interface CleaningSlot {
+  dayOfWeek: number;
+  timeSlot: number;
+  time: string;
+  schedule?: RoomCleaningSchedule;
+  isAvailable: boolean;
+}
+
+export interface CleaningStats {
+  scheduled: number;
+  in_progress: number;
+  completed: number;
+  skipped: number;
+  total: number;
+}
+
 // Laundry Management
 export type LaundryServiceType = 'wash_only' | 'wash_and_dry' | 'wash_dry_fold';
 export type LaundryStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
