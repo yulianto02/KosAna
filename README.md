@@ -484,7 +484,7 @@ How to run the app:
 1. open terminal and cd kosana/api
    node server.js
 2. cd kosana/app
-   npm run dev
+   npm run dev -- --host
 
 Username: admin
 password: admin123
@@ -493,5 +493,11 @@ Troubleshoot
 1. when ip change you have to change the ip address in
    app/.env
    app/config/api.ts
+2. Also change the IP in server.js 
+  // Middleware
+  app.use(cors({
+    origin: ['http://localhost:5173', 'http://192.168.0.101:5173'],
+    credentials: true
+  }));
 
    
