@@ -1,14 +1,16 @@
 # Kos Ana - Sistem Manajemen Kos Indonesia
 
-A comprehensive property management system designed for Indonesian boarding houses (kos), inspired by platforms like Mamikos, Cove.id, and Rukos. Built with modern web technologies and ready for mobile expansion.
+A comprehensive property management system designed for Indonesian boarding houses (kos). Built with modern web technologies and fully responsive for mobile, tablet, and desktop.
 
 ## 🎯 Vision
 
 Kos Ana aims to be the all-in-one platform for kos management in Indonesia, serving three distinct user types:
 
-1. **Pemilik Kos (Owners)** - Web-based admin dashboard for full property management
+1. **Pemilik Kos (Owners)** - Web-based admin dashboard for full property management - **Now 100% responsive**
 2. **Penjaga Kos (Managers)** - Mobile app for daily operations and tenant interaction
 3. **Penyewa (Tenants)** - Web platform for room discovery, booking, and tenant services
+
+
 
 ---
 
@@ -19,58 +21,116 @@ Kos Ana aims to be the all-in-one platform for kos management in Indonesia, serv
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | **Frontend** | React 18 + TypeScript + Vite | Admin dashboard (Pemilik Kos) |
-| **UI Components** | shadcn/ui + Tailwind CSS | Consistent design system |
+| **UI Components** | shadcn/ui + Tailwind CSS | Consistent design system + responsive |
+| **Responsive** | use-mobile.ts + Sheet + Tailwind breakpoints | Mobile-first (360px - 1024px+) |
 | **Backend** | Node.js + Express | REST API server |
 | **Database** | PostgreSQL | Primary data storage |
 | **Auth** | JWT (jsonwebtoken) | Stateless authentication |
-| **State Management** | React Hooks | Local state management |
+| **State Management** | React Hooks | Local + responsive state |
 | **Notifications** | Sonner (toast) | User feedback |
 
+
+
+
 ### Project Structure
+
 kosana/
-├── api/                          # Backend Node.js/Express
-│   ├── server.js                 # Main server entry
-│   ├── db.js                     # PostgreSQL connection pool
-│   ├── middleware/
-│   │   └── auth.js               # JWT auth & role middleware
-│   └── repositories/             # Database access layer
-│       ├── propertyRepository.js
-│       ├── roomRepository.js
-│       ├── tenantRepository.js
-│       ├── paymentRepository.js
-│       ├── expenseRepository.js
-│       ├── maintenanceRepository.js
-│       ├── laundryRepository.js
-│       ├── acCleaningRepository.js
-│       └── notificationRepository.js
+├── api/ # Backend Node.js/Express
+│ ├── server.js # Main server entry
+│ ├── db.js # PostgreSQL connection pool
+│ ├── middleware/
+│ │ └── auth.js # JWT auth & role middleware
+│ └── repositories/ # Database access layer
+│ ├── propertyRepository.js
+│ ├── roomRepository.js
+│ ├── tenantRepository.js
+│ ├── paymentRepository.js
+│ ├── expenseRepository.js
+│ ├── maintenanceRepository.js
+│ ├── laundryRepository.js
+│ ├── acCleaningRepository.js
+│ ├── roomCleaningRepository.js
+│ ├── reportRepository.js
+│ ├── settingsRepository.js
+│ ├── auditLogRepository.js
+│ └── notificationRepository.js
 │
-└── app/                          # Frontend React + TypeScript
-├── src/
-│   ├── pages/               # Route pages
-│   │   ├── Dashboard.tsx
-│   │   ├── Properties.tsx
-│   │   ├── Rooms.tsx
-│   │   ├── Tenants.tsx
-│   │   ├── Payments.tsx
-│   │   ├── Expenses.tsx
-│   │   ├── Maintenance.tsx   # With date picker
-│   │   ├── Laundry.tsx
-│   │   ├── ACCleaning.tsx
-│   │   └── Settings.tsx
-│   ├── components/
-│   │   ├── layout/
-│   │   │   ├── Layout.tsx    # Auth handling & navigation
-│   │   │   ├── Header.tsx
-│   │   │   └── Sidebar.tsx
-│   │   └── ui/              # shadcn/ui components
-│   ├── services/
-│   │   ├── api.ts           # API client
-│   │   └── auth.ts          # Auth service with error handling
-│   ├── types/
-│   │   └── index.ts         # TypeScript interfaces
-│   └── lib/
-│       └── format.ts        # Date/currency formatting
-└── package.json
+└── app/ # Frontend React + TypeScript
+    ├── src/
+    │ ├── pages/ # Route pages - ALL RESPONSIVE NOW
+    │ │ ├── Dashboard.tsx
+    │ │ ├── Properties.tsx
+    │ │ ├── Rooms.tsx
+    │ │ ├── Tenants.tsx
+    │ │ ├── Payments.tsx
+    │ │ ├── Expenses.tsx
+    │ │ ├── Reports.tsx # ✅ Responsive - Charts resize, tabs scrollable
+    │ │ ├── Maintenance.tsx # ✅ Responsive - Table→Cards, Sheet forms
+    │ │ ├── Laundry.tsx # ✅ Responsive - Mobile cards + filters
+    │ │ ├── ACCleaning.tsx # ✅ Responsive - Same system
+    │ │ ├── RoomCleaning.tsx # ✅ Responsive - Completed May 2026
+    │ │ ├── Login.tsx # ✅ Responsive - 100dvh + safe-area
+    │ │ └── Settings.tsx # ✅ Responsive - 5 tabs scrollable
+    │ ├── components/
+    │ │ ├── layout/
+    │ │ │ ├── Layout.tsx
+    │ │ │ ├── Header.tsx
+    │ │ │ └── Sidebar.tsx
+    │ │ ├── ProtectedRoute.tsx
+    │ │ └── ui/ # shadcn/ui components (48 components) + Sheet
+    │ ├── config/
+    │ │ └── api.ts
+    │ ├── hooks/
+    │ │ └── use-mobile.ts # Mobile breakpoint hook (<768px)
+    │ ├── services/
+    │ │ ├── api.ts
+    │ │ └── auth.ts
+    │ ├── types/
+    │ │ └── index.ts
+    │ └── lib/
+    │ ├── format.ts
+    │ └── utils.ts
+    └── package.json
+
+## 📱 Mobile Responsiveness System (NEW - May 2026)
+
+> All pages completed: RoomCleaning, Laundry, Maintenance, ACCleaning, Reports, Settings, Login
+
+### Design Principles
+1. **Desktop ≥768px = unchanged** - 100% backward compatible
+2. **Mobile <768px = Sheets + Cards** - No page horizontal scroll ever
+3. **44px touch targets** - All buttons/inputs `h-11` on mobile, `h-10` on desktop
+4. **16px inputs on mobile** - `text-base sm:text-sm` prevents iOS zoom
+
+### Standard Pattern Used
+```tsx
+// Every page wrapper
+<div className="space-y-6 w-full max-w-full overflow-x-hidden">
+
+// Header
+<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  <h1 className="text-xl sm:text-2xl font-bold truncate">...</h1>
+  <Button className="h-11 sm:h-10 w-full sm:w-auto">...</Button>
+</div>
+
+// Filters
+<div className="flex flex-col sm:flex-row gap-3 bg-white p-3 sm:p-4 rounded-lg border">
+  <Input className="h-11 text-base sm:h-10 sm:text-sm w-full" />
+  <select className="h-11 sm:h-10 text-base sm:text-sm" />
+</div>
+
+// Table -> Cards
+<Card className="hidden sm:block"><table>...</table></Card>
+<div className="grid grid-cols-1 gap-3 sm:hidden">{cards}</div>
+
+// Dialogs -> Sheets
+{isMobile? (
+  <Sheet><SheetContent side="bottom" className="h-[100dvh] p-0 flex flex-col">
+    <div className="flex-1 overflow-y-auto p-4 pb-[env(safe-area-inset-bottom)]">...</div>
+    <SheetFooter className="p-4 border-t pb-[calc(1rem+env(safe-area-inset-bottom))]">...</SheetFooter>
+  </SheetContent></Sheet>
+) : <Dialog>...</Dialog>}
+
 
 
 ---
@@ -90,7 +150,10 @@ kosana/
 | `expenses` | Operational costs | id, category, amount, date, description, approval_status |
 | `maintenance_requests` | Repair tracking | id, room_id, issue_type, priority, status, request_date |
 | `ac_cleaning_schedule` | AC maintenance | id, room_id, scheduled_date, status, completed_date |
+| `room_cleaning_schedule` | Room cleaning | id, room_id, scheduled_date, status, completed_date |
 | `laundry_orders` | Laundry service | id, tenant_id, weight, status, completed_date |
+| `reports` | Generated reports cache | id, type, period_start, period_end, data |
+| `settings` | App configuration | id, key, value, updated_at |
 | `notifications` | System alerts | id, user_id, type, message, is_read |
 | `whatsapp_messages` | WA integration | id, phone_number, message, status, sent_at |
 | `audit_logs` | Activity tracking | id, user_id, action, table_name, record_id, timestamp |
