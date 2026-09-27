@@ -4,8 +4,21 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 require('dotenv').config();
 const pool = require('./db'); // Required for the pool.query calls in auth routes
-const { generateToken, authenticateToken, requireRole } = require('./middleware/auth');
-
+const {
+  generateToken,
+  generateAccessToken,
+  generateRefreshToken,
+  authenticateToken,
+  requireRole,
+  requirePermission,
+  getPropertyScopesForUser,
+  getUserFullRecord,
+  revokeUserSessions,
+  getUserPermissions,
+  getAccessiblePropertyIds,
+  JWT_SECRET
+} = require('./middleware/auth');
+const jwt = require('jsonwebtoken');
 
 // Import repositories
 const propertyRepository = require('./repositories/propertyRepository');
@@ -41,103 +54,152 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString(), database: 'PostgreSQL' });
 });
 
-// ==================== AUTHENTICATION ====================
+// ==================== AUTHENTICATION - TOKEN OVERHAUL v2 ====================
+// Replace your existing /api/auth/* routes with this block in server.js
+
+// Keep for audit
+// pool is already imported in server.js
+
+// POST /api/auth/login
 app.post('/api/auth/login', asyncHandler(async (req, res) => {
   const { username, password } = req.body;
-  
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password required' });
-  }
-  
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+
   const result = await pool.query(
-    'SELECT id, username, email, full_name, role, password_hash, is_active FROM users WHERE username = $1',
+    `SELECT u.id, u.username, u.email, u.full_name, u.role as old_role, u.password_hash, u.is_active, u.token_version,
+            r.code as global_role
+     FROM users u LEFT JOIN roles r ON r.id = u.role_id
+     WHERE u.username = $1`,
     [username]
   );
-  
-  if (result.rows.length === 0) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-  
-  const user = result.rows[0];
-  
-  if (!user.is_active) {
-    return res.status(401).json({ error: 'Account is deactivated' });
-  }
-  
-  const validPassword = await bcrypt.compare(password, user.password_hash);
-  if (!validPassword) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-  
-  // Update last login
-  await pool.query('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
-  
-  const token = generateToken(user);
-  
+  if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+  const userRecord = result.rows[0];
+  if (!userRecord.is_active) return res.status(401).json({ error: 'Account is deactivated' });
+
+  const validPassword = await bcrypt.compare(password, userRecord.password_hash);
+  if (!validPassword) return res.status(401).json({ error: 'Invalid credentials' });
+
+  await pool.query('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [userRecord.id]);
+
+  const propertyScopes = await getPropertyScopesForUser(userRecord.id);
+
+  const accessToken = generateAccessToken(userRecord, propertyScopes);
+  const refreshToken = generateRefreshToken(userRecord);
+
+  // audit
+  try { await pool.query(`INSERT INTO audit_logs (user_id, action, table_name, record_id) VALUES ($1,'login','users',$1)`, [userRecord.id]); } catch(e){}
+
   res.json({
-    token,
+    accessToken,
+    refreshToken,
+    token: accessToken, // backward compat for old frontend
     user: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      fullName: user.full_name,
-      role: user.role
+      id: userRecord.id,
+      username: userRecord.username,
+      email: userRecord.email,
+      fullName: userRecord.full_name,
+      role: userRecord.global_role || userRecord.old_role,
+      globalRole: userRecord.global_role || userRecord.old_role,
+      tokenVersion: userRecord.token_version
+    },
+    propertyScopes,
+    permissions: [...new Set(propertyScopes.flatMap(s => s.permissions))]
+  });
+}));
+
+// POST /api/auth/refresh
+app.post('/api/auth/refresh', asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) return res.status(400).json({ error: 'Refresh token required' });
+
+  try {
+    const decoded = jwt.verify(refreshToken, JWT_SECRET);
+    const userId = decoded.userId;
+    if (!userId) return res.status(401).json({ error: 'Invalid refresh payload' });
+
+    const userRecord = await getUserFullRecord(userId);
+    if (!userRecord) return res.status(401).json({ error: 'User not found' });
+    if (!userRecord.is_active) return res.status(401).json({ error: 'Account deactivated', code: 'ACCOUNT_DEACTIVATED' });
+    if (decoded.tokenVersion !== userRecord.token_version) {
+      return res.status(401).json({ error: 'Refresh token revoked', code: 'TOKEN_REVOKED' });
     }
-  });
-}));
 
-app.post('/api/auth/register', asyncHandler(async (req, res) => {
-  const { username, password, email, phone, fullName, role = 'penjaga' } = req.body;
-  
-  // Check if username or email exists
-  const existing = await pool.query(
-    'SELECT id FROM users WHERE username = $1 OR email = $2',
-    [username, email]
-  );
-  
-  if (existing.rows.length > 0) {
-    return res.status(409).json({ error: 'Username or email already exists' });
+    const propertyScopes = await getPropertyScopesForUser(userId);
+    const newAccessToken = generateAccessToken(userRecord, propertyScopes);
+
+    // Optionally rotate refresh token every time (keep same version, new expiry)
+    const newRefreshToken = generateRefreshToken(userRecord);
+
+    res.json({
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      token: newAccessToken
+    });
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Refresh token expired, please login again', code: 'REFRESH_EXPIRED' });
+    }
+    return res.status(401).json({ error: 'Invalid refresh token' });
   }
-  
-  const hashedPassword = await bcrypt.hash(password, 10);
-  
-  const result = await pool.query(`
-    INSERT INTO users (username, email, phone, password_hash, role, full_name)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING id, username, email, full_name, role, created_at
-  `, [username, email, phone, hashedPassword, role, fullName]);
-  
-  const newUser = result.rows[0];
-  const token = generateToken(newUser);
-  
-  res.status(201).json({
-    token,
-    user: newUser
-  });
 }));
 
-// Protected route example - get current user
+// POST /api/auth/logout
+app.post('/api/auth/logout', authenticateToken, asyncHandler(async (req, res) => {
+  // Client deletes tokens; we log for audit. No version bump on normal logout to allow other devices.
+  // If you want single-device logout -> call revokeUserSessions
+  try {
+    await pool.query(`INSERT INTO audit_logs (user_id, action, table_name, record_id) VALUES ($1,'logout','users',$1)`, [req.user.id]);
+  } catch(e){}
+  res.json({ message: 'Logged out' });
+}));
+
+// POST /api/auth/logout-all - revoke all sessions
+app.post('/api/auth/logout-all', authenticateToken, asyncHandler(async (req, res) => {
+  await revokeUserSessions(req.user.id);
+  res.json({ message: 'All sessions revoked, please login again' });
+}));
+
+// GET /api/auth/me
 app.get('/api/auth/me', authenticateToken, asyncHandler(async (req, res) => {
-  res.json(req.user);
+  const userRecord = await getUserFullRecord(req.user.id);
+  const propertyScopes = await getPropertyScopesForUser(req.user.id);
+  const flatPermissions = [...new Set(propertyScopes.flatMap(s => s.permissions))];
+  const accessiblePropertyIds = getAccessiblePropertyIds(req);
+
+  res.json({
+    id: userRecord.id,
+    username: userRecord.username,
+    email: userRecord.email,
+    fullName: userRecord.full_name,
+    role: userRecord.global_role || userRecord.old_role,
+    globalRole: userRecord.global_role || userRecord.old_role,
+    isActive: userRecord.is_active,
+    tokenVersion: userRecord.token_version,
+    propertyScopes,
+    permissions: req.user.isAdmin ? ['*'] : flatPermissions,
+    accessiblePropertyIds,
+    isAdmin: req.user.isAdmin
+  });
 }));
 
-// Change password
-app.post('/api/auth/change-password', authenticateToken, asyncHandler(async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  
-  const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
-  const user = result.rows[0];
-  
-  const validPassword = await bcrypt.compare(currentPassword, user.password_hash);
-  if (!validPassword) {
-    return res.status(401).json({ error: 'Current password is incorrect' });
+// Helper endpoint for admin to revoke a user (bumps token_version)
+app.post('/api/auth/revoke/:userId', authenticateToken, asyncHandler(async (req, res) => {
+  // Only admin/management with users.manage
+  if (!req.user.isAdmin && !req.user.permissions.includes('users.manage')) {
+    return res.status(403).json({ error: 'users.manage required' });
   }
-  
-  const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-  await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedNewPassword, req.user.id]);
-  
-  res.json({ message: 'Password changed successfully' });
+  await revokeUserSessions(req.params.userId);
+  res.json({ message: `Sessions revoked for user ${req.params.userId}` });
 }));
+
+// ==== IMPORTANT: Add helper for property assignment changes ====
+// Call revokeUserSessions(userId) whenever you:
+// - deactivate user
+// - change user.role_id
+// - INSERT/DELETE in property_members
+// Example usage in your existing property assignment route (add after change):
+// await revokeUserSessions(targetUserId);
+
 
 // ==================== DASHBOARD ====================
 app.get('/api/dashboard/stats', asyncHandler(async (req, res) => {
