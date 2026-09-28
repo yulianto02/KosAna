@@ -3,7 +3,7 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 require('dotenv').config();
-const pool = require('./db'); // Required for the pool.query calls in auth routes
+const pool = require('./db');
 const {
   generateToken,
   generateAccessToken,
@@ -32,39 +32,46 @@ const acCleaningRepository = require('./repositories/acCleaningRepository');
 const notificationRepository = require('./repositories/notificationRepository');
 const settingsRepository = require('./repositories/settingsRepository');
 const auditLogRepo = require('./repositories/auditLogRepository');
+const roomCleaningRepo = require('./repositories/roomCleaningRepository');
+let reportsRepository;
+try {
+  reportsRepository = require('./repositories/reportsRepository');
+} catch (e) {
+  reportsRepository = require('./repositories/reportRepository');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
 app.use(cors({
   origin: ['http://localhost:5173', 'http://192.168.0.101:5173'],
   credentials: true
 }));
-
 app.use(express.json());
 
-// Error handler middleware
 const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-// ==================== HEALTH CHECK ====================
+function getScope(req) {
+  const ids = getAccessiblePropertyIds(req);
+  return { propertyIds: ids };
+}
+
+function assertPropertyInScope(propertyId, scope) {
+  if (!propertyId) return true;
+  if (scope.propertyIds.includes('*')) return true;
+  return scope.propertyIds.includes(propertyId);
+}
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString(), database: 'PostgreSQL' });
 });
 
-// ==================== AUTHENTICATION - TOKEN OVERHAUL v2 ====================
-// Replace your existing /api/auth/* routes with this block in server.js
-
-// Keep for audit
-// pool is already imported in server.js
-
-// POST /api/auth/login
+// ==================== AUTH ====================
 app.post('/api/auth/login', asyncHandler(async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-
   const result = await pool.query(
     `SELECT u.id, u.username, u.email, u.full_name, u.role as old_role, u.password_hash, u.is_active, u.token_version,
             r.code as global_role
@@ -75,24 +82,17 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
   if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
   const userRecord = result.rows[0];
   if (!userRecord.is_active) return res.status(401).json({ error: 'Account is deactivated' });
-
   const validPassword = await bcrypt.compare(password, userRecord.password_hash);
   if (!validPassword) return res.status(401).json({ error: 'Invalid credentials' });
-
   await pool.query('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [userRecord.id]);
-
   const propertyScopes = await getPropertyScopesForUser(userRecord.id);
-
   const accessToken = generateAccessToken(userRecord, propertyScopes);
   const refreshToken = generateRefreshToken(userRecord);
-
-  // audit
   try { await pool.query(`INSERT INTO audit_logs (user_id, action, table_name, record_id) VALUES ($1,'login','users',$1)`, [userRecord.id]); } catch(e){}
-
   res.json({
     accessToken,
     refreshToken,
-    token: accessToken, // backward compat for old frontend
+    token: accessToken,
     user: {
       id: userRecord.id,
       username: userRecord.username,
@@ -107,34 +107,23 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
   });
 }));
 
-// POST /api/auth/refresh
 app.post('/api/auth/refresh', asyncHandler(async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) return res.status(400).json({ error: 'Refresh token required' });
-
   try {
     const decoded = jwt.verify(refreshToken, JWT_SECRET);
     const userId = decoded.userId;
     if (!userId) return res.status(401).json({ error: 'Invalid refresh payload' });
-
     const userRecord = await getUserFullRecord(userId);
     if (!userRecord) return res.status(401).json({ error: 'User not found' });
     if (!userRecord.is_active) return res.status(401).json({ error: 'Account deactivated', code: 'ACCOUNT_DEACTIVATED' });
     if (decoded.tokenVersion !== userRecord.token_version) {
       return res.status(401).json({ error: 'Refresh token revoked', code: 'TOKEN_REVOKED' });
     }
-
     const propertyScopes = await getPropertyScopesForUser(userId);
     const newAccessToken = generateAccessToken(userRecord, propertyScopes);
-
-    // Optionally rotate refresh token every time (keep same version, new expiry)
     const newRefreshToken = generateRefreshToken(userRecord);
-
-    res.json({
-      accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
-      token: newAccessToken
-    });
+    res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken, token: newAccessToken });
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
       return res.status(401).json({ error: 'Refresh token expired, please login again', code: 'REFRESH_EXPIRED' });
@@ -143,29 +132,21 @@ app.post('/api/auth/refresh', asyncHandler(async (req, res) => {
   }
 }));
 
-// POST /api/auth/logout
 app.post('/api/auth/logout', authenticateToken, asyncHandler(async (req, res) => {
-  // Client deletes tokens; we log for audit. No version bump on normal logout to allow other devices.
-  // If you want single-device logout -> call revokeUserSessions
-  try {
-    await pool.query(`INSERT INTO audit_logs (user_id, action, table_name, record_id) VALUES ($1,'logout','users',$1)`, [req.user.id]);
-  } catch(e){}
+  try { await pool.query(`INSERT INTO audit_logs (user_id, action, table_name, record_id) VALUES ($1,'logout','users',$1)`, [req.user.id]); } catch(e){}
   res.json({ message: 'Logged out' });
 }));
 
-// POST /api/auth/logout-all - revoke all sessions
 app.post('/api/auth/logout-all', authenticateToken, asyncHandler(async (req, res) => {
   await revokeUserSessions(req.user.id);
   res.json({ message: 'All sessions revoked, please login again' });
 }));
 
-// GET /api/auth/me
 app.get('/api/auth/me', authenticateToken, asyncHandler(async (req, res) => {
   const userRecord = await getUserFullRecord(req.user.id);
   const propertyScopes = await getPropertyScopesForUser(req.user.id);
   const flatPermissions = [...new Set(propertyScopes.flatMap(s => s.permissions))];
   const accessiblePropertyIds = getAccessiblePropertyIds(req);
-
   res.json({
     id: userRecord.id,
     username: userRecord.username,
@@ -182,9 +163,7 @@ app.get('/api/auth/me', authenticateToken, asyncHandler(async (req, res) => {
   });
 }));
 
-// Helper endpoint for admin to revoke a user (bumps token_version)
 app.post('/api/auth/revoke/:userId', authenticateToken, asyncHandler(async (req, res) => {
-  // Only admin/management with users.manage
   if (!req.user.isAdmin && !req.user.permissions.includes('users.manage')) {
     return res.status(403).json({ error: 'users.manage required' });
   }
@@ -192,46 +171,19 @@ app.post('/api/auth/revoke/:userId', authenticateToken, asyncHandler(async (req,
   res.json({ message: `Sessions revoked for user ${req.params.userId}` });
 }));
 
-// ==== IMPORTANT: Add helper for property assignment changes ====
-// Call revokeUserSessions(userId) whenever you:
-// - deactivate user
-// - change user.role_id
-// - INSERT/DELETE in property_members
-// Example usage in your existing property assignment route (add after change):
-// await revokeUserSessions(targetUserId);
-
-
-// ==================== DASHBOARD ====================
-app.get('/api/dashboard/stats', asyncHandler(async (req, res) => {
-  // Get stats from database
-  const properties = await propertyRepository.findAll();
-  const rooms = await roomRepository.findAll();
-  const tenants = await tenantRepository.findAll('active');
-
-  console.log('Properties count:', properties.length);
-  console.log('Rooms count:', rooms.length);
-  console.log('Active tenants count:', tenants.length);
-  console.log('First property (if any):', properties[0] || 'none');
-  console.log('First room status (if any):', rooms[0]?.status || 'none');
-  
+// ==================== DASHBOARD - SCOPED ====================
+app.get('/api/dashboard/stats', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const properties = await propertyRepository.findAll(scope);
+  const rooms = await roomRepository.findAll(scope);
+  const tenants = await tenantRepository.findAll({ status: 'active', ...scope });
   const occupiedRooms = rooms.filter(r => r.status === 'occupied').length;
   const vacantRooms = rooms.filter(r => r.status === 'available').length;
-  
-  // Get current month revenue and expenses from views or calculate
-  const currentPeriod = new Date().toISOString().slice(0, 7); // YYYY-MM
-  const monthlyRevenue = await paymentRepository.getRevenueByPeriod(currentPeriod);
-  
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  const monthlyExpenses = await expenseRepository.getTotalByPropertyAndDate(
-    null, 
-    startOfMonth.toISOString().split('T')[0],
-    new Date().toISOString().split('T')[0]
-  );
-
-  const pendingPayments = (await paymentRepository.findAll({ status: 'pending' })).length;
-  const occupancyRate = rooms.length > 0 ? (occupiedRooms / rooms.length) * 100 : 0;
-
+  const currentPeriod = new Date().toISOString().slice(0, 7);
+  const monthlyRevenue = await paymentRepository.getRevenueByPeriod(currentPeriod, scope);
+  const startOfMonth = new Date(); startOfMonth.setDate(1);
+  const monthlyExpenses = await expenseRepository.getTotalByPropertyAndDate(null, startOfMonth.toISOString().split('T')[0], new Date().toISOString().split('T')[0], scope);
+  const pendingPaymentsList = await paymentRepository.findAll({ status: 'pending', ...scope });
   res.json({
     total_properties: properties.length,
     total_rooms: rooms.length,
@@ -240,684 +192,593 @@ app.get('/api/dashboard/stats', asyncHandler(async (req, res) => {
     total_tenants: tenants.length,
     monthly_revenue: parseFloat(monthlyRevenue) || 0,
     monthly_expenses: parseFloat(monthlyExpenses) || 0,
-    pending_payments: (await paymentRepository.findAll({ status: 'pending' })).length,
+    pending_payments: pendingPaymentsList.length,
     occupancy_rate: rooms.length > 0 ? Math.round((occupiedRooms / rooms.length) * 1000) / 10 : 0
   });
-
-  // res.json({
-  //   totalProperties: properties.length,
-  //   totalRooms: rooms.length,
-  //   occupiedRooms,
-  //   vacantRooms,
-  //   totalTenants: tenants.length,
-  //   monthlyRevenue: parseFloat(monthlyRevenue) || 0,
-  //   monthlyExpenses: parseFloat(monthlyExpenses) || 0,
-  //   pendingPayments,
-  //   occupancyRate: Math.round(occupancyRate * 10) / 10
-  // });
 }));
 
-// ==================== PROPERTIES ====================
-app.get('/api/properties', asyncHandler(async (req, res) => {
-  const properties = await propertyRepository.findAll();
+// ==================== PROPERTIES - SCOPED ====================
+app.get('/api/properties', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const properties = await propertyRepository.findAll(scope);
   res.json(properties);
 }));
 
-app.get('/api/properties/:id', asyncHandler(async (req, res) => {
-  const property = await propertyRepository.findById(req.params.id);
+app.get('/api/properties/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const property = await propertyRepository.findById(req.params.id, scope);
   if (!property) return res.status(404).json({ error: 'Property not found' });
   res.json(property);
 }));
 
-app.post('/api/properties', asyncHandler(async (req, res) => {
+app.post('/api/properties', authenticateToken, requirePermission('properties.create'), asyncHandler(async (req, res) => {
   const newProperty = await propertyRepository.create({
     ...req.body,
     totalFloors: req.body.totalFloors || 0,
     totalRooms: req.body.totalRooms || 0,
     status: 'active'
   });
+  try {
+    await pool.query(`INSERT INTO property_members (property_id, user_id, role_id, is_owner) VALUES ($1,$2,(SELECT id FROM roles WHERE code='admin'), true) ON CONFLICT DO NOTHING`, [newProperty.id, req.user.id]);
+  } catch(e) {}
   res.status(201).json(newProperty);
 }));
 
-app.put('/api/properties/:id', asyncHandler(async (req, res) => {
-  const updated = await propertyRepository.update(req.params.id, req.body);
+app.put('/api/properties/:id', authenticateToken, requirePermission('properties.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await propertyRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Property not found' });
   res.json(updated);
 }));
 
-app.delete('/api/properties/:id', asyncHandler(async (req, res) => {
-  await propertyRepository.delete(req.params.id);
+app.delete('/api/properties/:id', authenticateToken, requirePermission('properties.delete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await propertyRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Property not found' });
   res.json({ message: 'Property deleted' });
 }));
 
-// ==================== ROOMS ====================
-app.get('/api/rooms', asyncHandler(async (req, res) => {
+// ==================== ROOMS - SCOPED ====================
+app.get('/api/rooms', authenticateToken, asyncHandler(async (req, res) => {
   const { propertyId } = req.query;
-  const rooms = await roomRepository.findAll(propertyId);
+  const scope = getScope(req);
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const rooms = await roomRepository.findAll({ propertyId, ...scope });
   res.json(rooms);
 }));
 
-app.get('/api/rooms/:id', asyncHandler(async (req, res) => {
-  const room = await roomRepository.findById(req.params.id);
+app.get('/api/rooms/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const room = await roomRepository.findById(req.params.id, scope);
   if (!room) return res.status(404).json({ error: 'Room not found' });
   res.json(room);
 }));
 
-app.post('/api/rooms', asyncHandler(async (req, res) => {
-  const newRoom = await roomRepository.create(req.body);
+app.post('/api/rooms', authenticateToken, requirePermission('rooms.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const newRoom = await roomRepository.create(req.body, scope);
   res.status(201).json(newRoom);
 }));
 
-app.put('/api/rooms/:id', asyncHandler(async (req, res) => {
-  const updated = await roomRepository.update(req.params.id, req.body);
+app.put('/api/rooms/:id', authenticateToken, requirePermission('rooms.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await roomRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Room not found' });
   res.json(updated);
 }));
 
-app.delete('/api/rooms/:id', asyncHandler(async (req, res) => {
-  await roomRepository.delete(req.params.id);
+app.delete('/api/rooms/:id', authenticateToken, requirePermission('rooms.delete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await roomRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Room not found' });
   res.json({ message: 'Room deleted' });
 }));
 
-// ==================== TENANTS ====================
-app.get('/api/tenants', asyncHandler(async (req, res) => {
-  const { status } = req.query;
-  const tenants = await tenantRepository.findAll(status);
+// ==================== TENANTS - SCOPED ====================
+app.get('/api/tenants', authenticateToken, asyncHandler(async (req, res) => {
+  const { status, propertyId } = req.query;
+  const scope = getScope(req);
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const tenants = await tenantRepository.findAll({ status, propertyId, ...scope });
   res.json(tenants);
 }));
 
-app.get('/api/tenants/:id', asyncHandler(async (req, res) => {
-  const tenant = await tenantRepository.findById(req.params.id);
+app.get('/api/tenants/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const tenant = await tenantRepository.findById(req.params.id, scope);
   if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
   res.json(tenant);
 }));
 
-app.post('/api/tenants', asyncHandler(async (req, res) => {
-  const client = await require('./db').connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    // Create tenant
-    const newTenant = await tenantRepository.create({
-      ...req.body,
-      status: 'active'
-    });
-    
-    // Update room status to occupied
-    await roomRepository.updateStatus(req.body.roomId, 'occupied');
-    
-    await client.query('COMMIT');
-    res.status(201).json(newTenant);
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+app.post('/api/tenants', authenticateToken, requirePermission('tenants.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const newTenant = await tenantRepository.create(req.body, scope);
+  res.status(201).json(newTenant);
 }));
 
-app.put('/api/tenants/:id', asyncHandler(async (req, res) => {
-  const updated = await tenantRepository.update(req.params.id, req.body);
+app.put('/api/tenants/:id', authenticateToken, requirePermission('tenants.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await tenantRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Tenant not found' });
   res.json(updated);
 }));
 
-app.delete('/api/tenants/:id', asyncHandler(async (req, res) => {
-  await tenantRepository.delete(req.params.id);
+app.delete('/api/tenants/:id', authenticateToken, requirePermission('tenants.delete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await tenantRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Tenant not found' });
   res.json({ message: 'Tenant deleted' });
 }));
 
-// ==================== PAYMENTS ====================
-app.get('/api/payments', asyncHandler(async (req, res) => {
-  const { status, tenantId } = req.query;
-  const payments = await paymentRepository.findAll({ status, tenantId });
+// ==================== PAYMENTS - SCOPED ====================
+app.get('/api/payments', authenticateToken, asyncHandler(async (req, res) => {
+  const { status, tenantId, propertyId } = req.query;
+  const scope = getScope(req);
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const payments = await paymentRepository.findAll({ status, tenantId, propertyId, ...scope });
   res.json(payments);
 }));
 
-app.get('/api/payments/:id', asyncHandler(async (req, res) => {
-  const payment = await paymentRepository.findById(req.params.id);
+app.get('/api/payments/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const payment = await paymentRepository.findById(req.params.id, scope);
   if (!payment) return res.status(404).json({ error: 'Payment not found' });
   res.json(payment);
 }));
 
-app.post('/api/payments', asyncHandler(async (req, res) => {
-  const newPayment = await paymentRepository.create(req.body);
+app.post('/api/payments', authenticateToken, requirePermission('payments.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const newPayment = await paymentRepository.create(req.body, scope);
   res.status(201).json(newPayment);
 }));
 
-app.put('/api/payments/:id', asyncHandler(async (req, res) => {
-  const updated = await paymentRepository.update(req.params.id, req.body);
+app.put('/api/payments/:id', authenticateToken, requirePermission('payments.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await paymentRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Payment not found' });
   res.json(updated);
 }));
 
-app.delete('/api/payments/:id', asyncHandler(async (req, res) => {
-  await paymentRepository.delete(req.params.id);
+app.delete('/api/payments/:id', authenticateToken, requirePermission('payments.delete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await paymentRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Payment not found' });
   res.json({ message: 'Payment deleted' });
 }));
 
-app.post('/api/payments/:id/mark-paid', asyncHandler(async (req, res) => {
-  const updated = await paymentRepository.markAsPaid(req.params.id, req.body);
+app.post('/api/payments/:id/mark-paid', authenticateToken, requirePermission('payments.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await paymentRepository.markAsPaid(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Payment not found' });
   res.json(updated);
 }));
 
-// ==================== EXPENSES ====================
-app.get('/api/expenses', asyncHandler(async (req, res) => {
-  const { propertyId, category } = req.query;
-  const expenses = await expenseRepository.findAll({ propertyId, category });
+// ==================== EXPENSES - SCOPED ====================
+app.get('/api/expenses', authenticateToken, asyncHandler(async (req, res) => {
+  const { propertyId, category, approval_status } = req.query;
+  const scope = getScope(req);
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const expenses = await expenseRepository.findAll({ property_id: propertyId, propertyId, category, approval_status, ...scope });
   res.json(expenses);
 }));
 
-app.get('/api/expenses/:id', asyncHandler(async (req, res) => {
-  const expense = await expenseRepository.findById(req.params.id);
+app.get('/api/expenses/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const expense = await expenseRepository.findById(req.params.id, scope);
   if (!expense) return res.status(404).json({ error: 'Expense not found' });
   res.json(expense);
 }));
 
-app.post('/api/expenses', asyncHandler(async (req, res) => {
-  const newExpense = await expenseRepository.create({
-    ...req.body,
-    approvalStatus: 'pending'
-  });
+app.post('/api/expenses', authenticateToken, requirePermission('expenses.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const newExpense = await expenseRepository.create({ ...req.body, approval_status: 'pending' }, scope);
   res.status(201).json(newExpense);
 }));
 
-app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
-  const updated = await expenseRepository.update(req.params.id, req.body);
+app.put('/api/expenses/:id', authenticateToken, requirePermission('expenses.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await expenseRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Expense not found' });
   res.json(updated);
 }));
 
-app.delete('/api/expenses/:id', asyncHandler(async (req, res) => {
-  await expenseRepository.delete(req.params.id);
+app.delete('/api/expenses/:id', authenticateToken, requirePermission('expenses.delete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await expenseRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Expense not found' });
   res.json({ message: 'Expense deleted' });
 }));
 
-app.post('/api/expenses/:id/approve', asyncHandler(async (req, res) => {
+app.post('/api/expenses/:id/approve', authenticateToken, requirePermission('expenses.approve'), asyncHandler(async (req, res) => {
   const { approvedBy } = req.body;
-  const updated = await expenseRepository.approve(req.params.id, approvedBy);
+  const scope = getScope(req);
+  const updated = await expenseRepository.approve(req.params.id, approvedBy, scope);
   if (!updated) return res.status(404).json({ error: 'Expense not found' });
   res.json(updated);
 }));
 
-app.post('/api/expenses/:id/reject', asyncHandler(async (req, res) => {
+app.post('/api/expenses/:id/reject', authenticateToken, requirePermission('expenses.approve'), asyncHandler(async (req, res) => {
   const { approvedBy } = req.body;
-  const updated = await expenseRepository.reject(req.params.id, approvedBy);
+  const scope = getScope(req);
+  const updated = await expenseRepository.reject(req.params.id, approvedBy, scope);
   if (!updated) return res.status(404).json({ error: 'Expense not found' });
   res.json(updated);
 }));
 
-// ==================== ROOM CLEANING ====================
-// Room Cleaning Routes
-const roomCleaningRepo = require('./repositories/roomCleaningRepository');
-
-// Get cleaning schedule for property and week
+// ==================== ROOM CLEANING - SCOPED (Step 4) ====================
 app.get('/api/room-cleaning', authenticateToken, asyncHandler(async (req, res) => {
   const { propertyId, weekStart } = req.query;
-  
-  if (!propertyId || !weekStart) {
-    return res.status(400).json({ error: 'propertyId and weekStart are required' });
-  }
-  
-  const schedules = await roomCleaningRepo.findByPropertyAndWeek(propertyId, weekStart);
+  if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart are required' });
+  const scope = getScope(req);
+  if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const schedules = await roomCleaningRepo.findByPropertyAndWeek(propertyId, weekStart, scope);
   res.json(schedules);
 }));
 
-// Get single schedule
 app.get('/api/room-cleaning/:id', authenticateToken, asyncHandler(async (req, res) => {
-  const schedule = await roomCleaningRepo.findById(req.params.id);
-  if (!schedule) {
-    return res.status(404).json({ error: 'Schedule not found' });
-  }
+  const scope = getScope(req);
+  const schedule = await roomCleaningRepo.findById(req.params.id, scope);
+  if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
   res.json(schedule);
 }));
 
-// Create new schedule
 app.post('/api/room-cleaning', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const pid = req.body.property_id || req.body.propertyId;
+  if (pid && !assertPropertyInScope(pid, scope)) return res.status(404).json({ error: 'Property not found' });
   const { room_id, property_id, week_start_date, day_of_week, time_slot, assigned_to, notes } = req.body;
-  
-  // Calculate scheduled_date based on week_start, day_of_week, and time_slot
   const weekStart = new Date(week_start_date);
   const scheduledDate = new Date(weekStart);
   scheduledDate.setDate(weekStart.getDate() + parseInt(day_of_week));
-  
-  // Set time based on slot (1-3: 09:00-11:00, 4-6: 13:00-15:00)
   const hour = time_slot <= 3 ? 9 + (time_slot - 1) : 13 + (time_slot - 4);
   scheduledDate.setHours(hour, 0, 0, 0);
-  
   const schedule = await roomCleaningRepo.create({
-    room_id,
-    property_id,
-    week_start_date,
-    day_of_week: parseInt(day_of_week),
-    time_slot: parseInt(time_slot),
-    scheduled_date: scheduledDate.toISOString(),
-    assigned_to,
-    notes
-  });
-  
-  // Log audit
-  await auditLogRepo.create({
-    user_id: req.user.id,
-    action: 'CREATE',
-    table_name: 'room_cleaning_schedule',
-    record_id: schedule.id,
-    new_data: schedule
-  });
-  
+    room_id, property_id, week_start_date, day_of_week: parseInt(day_of_week), time_slot: parseInt(time_slot),
+    scheduled_date: scheduledDate.toISOString(), assigned_to, notes
+  }, scope);
+  await auditLogRepo.create({ user_id: req.user.id, action: 'CREATE', table_name: 'room_cleaning_schedule', record_id: schedule.id, new_data: schedule });
   res.status(201).json(schedule);
 }));
 
-// Update schedule
 app.put('/api/room-cleaning/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
   const updates = req.body;
-  
-  // If updating day/time, recalculate scheduled_date
+  const existing = await roomCleaningRepo.findById(req.params.id, scope);
+  if (!existing) return res.status(404).json({ error: 'Schedule not found' });
   if (updates.day_of_week !== undefined || updates.time_slot !== undefined) {
-    const existing = await roomCleaningRepo.findById(req.params.id);
     const weekStart = new Date(existing.week_start_date);
     const dayOfWeek = updates.day_of_week !== undefined ? parseInt(updates.day_of_week) : existing.day_of_week;
     const timeSlot = updates.time_slot !== undefined ? parseInt(updates.time_slot) : existing.time_slot;
-    
     const scheduledDate = new Date(weekStart);
     scheduledDate.setDate(weekStart.getDate() + dayOfWeek);
     const hour = timeSlot <= 3 ? 9 + (timeSlot - 1) : 13 + (timeSlot - 4);
     scheduledDate.setHours(hour, 0, 0, 0);
-    
     updates.scheduled_date = scheduledDate.toISOString();
   }
-  
-  const schedule = await roomCleaningRepo.update(req.params.id, updates);
-  
-  await auditLogRepo.create({
-    user_id: req.user.id,
-    action: 'UPDATE',
-    table_name: 'room_cleaning_schedule',
-    record_id: req.params.id,
-    new_data: schedule
-  });
-  
+  const schedule = await roomCleaningRepo.update(req.params.id, updates, scope);
+  await auditLogRepo.create({ user_id: req.user.id, action: 'UPDATE', table_name: 'room_cleaning_schedule', record_id: req.params.id, new_data: schedule });
   res.json(schedule);
 }));
 
-// Mark as in progress
 app.post('/api/room-cleaning/:id/start', authenticateToken, asyncHandler(async (req, res) => {
-  const schedule = await roomCleaningRepo.markInProgress(req.params.id);
-  
-  await auditLogRepo.create({
-    user_id: req.user.id,
-    action: 'START',
-    table_name: 'room_cleaning_schedule',
-    record_id: req.params.id
-  });
-  
+  const scope = getScope(req);
+  const schedule = await roomCleaningRepo.markInProgress(req.params.id, scope);
+  if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+  await auditLogRepo.create({ user_id: req.user.id, action: 'START', table_name: 'room_cleaning_schedule', record_id: req.params.id });
   res.json(schedule);
 }));
 
-// Complete schedule
 app.post('/api/room-cleaning/:id/complete', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
   const { notes, actual_duration } = req.body;
-  const schedule = await roomCleaningRepo.complete(req.params.id, req.user.id, notes, actual_duration);
-  
-  await auditLogRepo.create({
-    user_id: req.user.id,
-    action: 'COMPLETE',
-    table_name: 'room_cleaning_schedule',
-    record_id: req.params.id
-  });
-  
+  const schedule = await roomCleaningRepo.complete(req.params.id, req.user.id, notes, actual_duration, scope);
+  if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+  await auditLogRepo.create({ user_id: req.user.id, action: 'COMPLETE', table_name: 'room_cleaning_schedule', record_id: req.params.id });
   res.json(schedule);
 }));
 
-// Skip schedule
 app.post('/api/room-cleaning/:id/skip', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
   const { reason } = req.body;
-  const schedule = await roomCleaningRepo.skip(req.params.id, reason);
-  
-  await auditLogRepo.create({
-    user_id: req.user.id,
-    action: 'SKIP',
-    table_name: 'room_cleaning_schedule',
-    record_id: req.params.id
-  });
-  
+  const schedule = await roomCleaningRepo.skip(req.params.id, reason, scope);
+  if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+  await auditLogRepo.create({ user_id: req.user.id, action: 'SKIP', table_name: 'room_cleaning_schedule', record_id: req.params.id });
   res.json(schedule);
 }));
 
-// Delete schedule
 app.delete('/api/room-cleaning/:id', authenticateToken, requireRole('admin'), asyncHandler(async (req, res) => {
-  await roomCleaningRepo.delete(req.params.id);
-  
-  await auditLogRepo.create({
-    user_id: req.user.id,
-    action: 'DELETE',
-    table_name: 'room_cleaning_schedule',
-    record_id: req.params.id
-  });
-  
+  const scope = getScope(req);
+  const deleted = await roomCleaningRepo.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Schedule not found' });
+  await auditLogRepo.create({ user_id: req.user.id, action: 'DELETE', table_name: 'room_cleaning_schedule', record_id: req.params.id });
   res.json({ message: 'Schedule deleted' });
 }));
 
-// Generate weekly schedule
 app.post('/api/room-cleaning/generate', authenticateToken, asyncHandler(async (req, res) => {
   const { propertyId, weekStart } = req.body;
-  const count = await roomCleaningRepo.generateSchedule(propertyId, weekStart);
-  
-  await auditLogRepo.create({
-    user_id: req.user.id,
-    action: 'GENERATE_SCHEDULE',
-    table_name: 'room_cleaning_schedule',
-    record_id: propertyId,
-    details: { week_start: weekStart, rooms_scheduled: count }
-  });
-  
+  const scope = getScope(req);
+  if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const count = await roomCleaningRepo.generateSchedule(propertyId, weekStart, scope);
+  await auditLogRepo.create({ user_id: req.user.id, action: 'GENERATE_SCHEDULE', table_name: 'room_cleaning_schedule', record_id: propertyId, details: { week_start: weekStart, rooms_scheduled: count } });
   res.json({ message: `${count} rooms scheduled`, count });
 }));
 
-// Get available slots
 app.get('/api/room-cleaning/slots', authenticateToken, asyncHandler(async (req, res) => {
   const { propertyId, weekStart } = req.query;
-  const slots = await roomCleaningRepo.getAvailableSlots(propertyId, weekStart);
+  const scope = getScope(req);
+  if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const slots = await roomCleaningRepo.getAvailableSlots(propertyId, weekStart, scope);
   res.json(slots);
 }));
 
-// Get stats
 app.get('/api/room-cleaning/stats', authenticateToken, asyncHandler(async (req, res) => {
   const { propertyId, weekStart } = req.query;
-  const stats = await roomCleaningRepo.getStats(propertyId, weekStart);
+  const scope = getScope(req);
+  if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const stats = await roomCleaningRepo.getStats(propertyId, weekStart, scope);
   res.json(stats);
 }));
 
-// Get room cleaning history
 app.get('/api/room-cleaning/room/:roomId/history', authenticateToken, asyncHandler(async (req, res) => {
-  const history = await roomCleaningRepo.getRoomHistory(req.params.roomId);
+  const scope = getScope(req);
+  const history = await roomCleaningRepo.getRoomHistory(req.params.roomId, 10, scope);
   res.json(history);
 }));
 
-
-// ==================== LAUNDRY ====================
-app.get('/api/laundry', asyncHandler(async (req, res) => {
-  const { status } = req.query;
-  const orders = await laundryRepository.findAll(status);
+// ==================== LAUNDRY - SCOPED (Step 4) ====================
+app.get('/api/laundry', authenticateToken, asyncHandler(async (req, res) => {
+  const { status, propertyId, tenantId } = req.query;
+  const scope = getScope(req);
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const orders = await laundryRepository.findAll({ status, propertyId, tenantId, ...scope });
   res.json(orders);
 }));
 
-app.get('/api/laundry/:id', asyncHandler(async (req, res) => {
-  const order = await laundryRepository.findById(req.params.id);
+app.get('/api/laundry/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const order = await laundryRepository.findById(req.params.id, scope);
   if (!order) return res.status(404).json({ error: 'Laundry order not found' });
   res.json(order);
 }));
 
-app.post('/api/laundry', asyncHandler(async (req, res) => {
-  const newOrder = await laundryRepository.create({
-    ...req.body,
-    status: 'pending'
-  });
+app.post('/api/laundry', authenticateToken, requirePermission('laundry.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const pid = req.body.property_id || req.body.propertyId;
+  if (pid && !assertPropertyInScope(pid, scope)) return res.status(404).json({ error: 'Property not found' });
+  const newOrder = await laundryRepository.create({ ...req.body, status: 'pending' }, scope);
   res.status(201).json(newOrder);
 }));
 
-app.put('/api/laundry/:id', asyncHandler(async (req, res) => {
-  const updated = await laundryRepository.update(req.params.id, req.body);
+app.put('/api/laundry/:id', authenticateToken, requirePermission('laundry.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await laundryRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Laundry order not found' });
   res.json(updated);
 }));
 
-app.delete('/api/laundry/:id', asyncHandler(async (req, res) => {
-  await laundryRepository.delete(req.params.id);
+app.delete('/api/laundry/:id', authenticateToken, requirePermission('laundry.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await laundryRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Laundry order not found' });
   res.json({ message: 'Laundry order deleted' });
 }));
 
-app.post('/api/laundry/:id/complete', asyncHandler(async (req, res) => {
+app.post('/api/laundry/:id/complete', authenticateToken, requirePermission('laundry.complete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
   const { completedBy } = req.body;
-  const updated = await laundryRepository.complete(req.params.id, completedBy);
+  const updated = await laundryRepository.complete(req.params.id, completedBy, scope);
   if (!updated) return res.status(404).json({ error: 'Laundry order not found' });
   res.json(updated);
 }));
 
-// ==================== MAINTENANCE ====================
-app.get('/api/maintenance', asyncHandler(async (req, res) => {
-  const { status } = req.query;
-  const requests = await maintenanceRepository.findAll(status);
+// ==================== MAINTENANCE - SCOPED ====================
+app.get('/api/maintenance', authenticateToken, asyncHandler(async (req, res) => {
+  const { status, propertyId } = req.query;
+  const scope = getScope(req);
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const requests = await maintenanceRepository.findAll({ status, propertyId, ...scope });
   res.json(requests);
 }));
 
-app.get('/api/maintenance/:id', asyncHandler(async (req, res) => {
-  const request = await maintenanceRepository.findById(req.params.id);
+app.get('/api/maintenance/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const request = await maintenanceRepository.findById(req.params.id, scope);
   if (!request) return res.status(404).json({ error: 'Maintenance request not found' });
   res.json(request);
 }));
 
-app.post('/api/maintenance', asyncHandler(async (req, res) => {
-  const newRequest = await maintenanceRepository.create({
-    ...req.body,
-    status: 'reported',
-    cost: 0
-  });
+app.post('/api/maintenance', authenticateToken, requirePermission('maintenance.create'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const newRequest = await maintenanceRepository.create({ ...req.body, status: 'reported', cost: 0 }, scope);
   res.status(201).json(newRequest);
 }));
 
-app.put('/api/maintenance/:id', asyncHandler(async (req, res) => {
-  const updated = await maintenanceRepository.update(req.params.id, req.body);
+app.put('/api/maintenance/:id', authenticateToken, requirePermission('maintenance.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await maintenanceRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Maintenance request not found' });
   res.json(updated);
 }));
 
-app.delete('/api/maintenance/:id', asyncHandler(async (req, res) => {
-  await maintenanceRepository.delete(req.params.id);
+app.delete('/api/maintenance/:id', authenticateToken, requirePermission('maintenance.delete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await maintenanceRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'Maintenance request not found' });
   res.json({ message: 'Maintenance request deleted' });
 }));
 
-app.post('/api/maintenance/:id/complete', asyncHandler(async (req, res) => {
-  const updated = await maintenanceRepository.complete(req.params.id, req.body);
+app.post('/api/maintenance/:id/complete', authenticateToken, requirePermission('maintenance.update'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await maintenanceRepository.complete(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'Maintenance request not found' });
   res.json(updated);
 }));
 
-app.post('/api/maintenance/:id/assign', asyncHandler(async (req, res) => {
+app.post('/api/maintenance/:id/assign', authenticateToken, requirePermission('maintenance.update'), asyncHandler(async (req, res) => {
   const { assignedTo } = req.body;
-  const updated = await maintenanceRepository.assign(req.params.id, assignedTo);
+  const scope = getScope(req);
+  const updated = await maintenanceRepository.assign(req.params.id, assignedTo, scope);
   if (!updated) return res.status(404).json({ error: 'Maintenance request not found' });
   res.json(updated);
 }));
 
-// ==================== AC CLEANING ====================
-app.get('/api/ac-cleaning', asyncHandler(async (req, res) => {
-  const { status } = req.query;
-  const schedules = await acCleaningRepository.findAll(status);
+// ==================== AC CLEANING - SCOPED (Step 4) ====================
+app.get('/api/ac-cleaning', authenticateToken, asyncHandler(async (req, res) => {
+  const { status, propertyId } = req.query;
+  const scope = getScope(req);
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const schedules = await acCleaningRepository.findAll({ status, propertyId, ...scope });
   res.json(schedules);
 }));
 
-app.get('/api/ac-cleaning/:id', asyncHandler(async (req, res) => {
-  const schedule = await acCleaningRepository.findById(req.params.id);
+app.get('/api/ac-cleaning/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const schedule = await acCleaningRepository.findById(req.params.id, scope);
   if (!schedule) return res.status(404).json({ error: 'AC cleaning schedule not found' });
   res.json(schedule);
 }));
 
-app.post('/api/ac-cleaning', asyncHandler(async (req, res) => {
-  const newSchedule = await acCleaningRepository.create({
-    ...req.body,
-    status: 'pending',
-    reminderSent: false
-  });
+app.post('/api/ac-cleaning', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const pid = req.body.property_id || req.body.propertyId;
+  if (pid && !assertPropertyInScope(pid, scope)) return res.status(404).json({ error: 'Property not found' });
+  const newSchedule = await acCleaningRepository.create({ ...req.body, status: 'pending' }, scope);
   res.status(201).json(newSchedule);
 }));
 
-app.put('/api/ac-cleaning/:id', asyncHandler(async (req, res) => {
-  const updated = await acCleaningRepository.update(req.params.id, req.body);
+app.put('/api/ac-cleaning/:id', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await acCleaningRepository.update(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'AC cleaning schedule not found' });
   res.json(updated);
 }));
 
-app.delete('/api/ac-cleaning/:id', asyncHandler(async (req, res) => {
-  await acCleaningRepository.delete(req.params.id);
+app.delete('/api/ac-cleaning/:id', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const deleted = await acCleaningRepository.delete(req.params.id, scope);
+  if (!deleted) return res.status(404).json({ error: 'AC cleaning schedule not found' });
   res.json({ message: 'AC cleaning schedule deleted' });
 }));
 
-app.post('/api/ac-cleaning/:id/complete', asyncHandler(async (req, res) => {
-  const updated = await acCleaningRepository.complete(req.params.id, req.body);
+app.post('/api/ac-cleaning/:id/complete', authenticateToken, requirePermission('room_cleaning.complete'), asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const updated = await acCleaningRepository.complete(req.params.id, req.body, scope);
   if (!updated) return res.status(404).json({ error: 'AC cleaning schedule not found' });
   res.json(updated);
 }));
 
-// ==================== NOTIFICATIONS ====================
-app.get('/api/notifications', asyncHandler(async (req, res) => {
+// ==================== NOTIFICATIONS - SCOPED ====================
+app.get('/api/notifications', authenticateToken, asyncHandler(async (req, res) => {
   const { userId, unreadOnly } = req.query;
-  
-  if (userId) {
-    const notifications = await notificationRepository.findByUserId(userId, unreadOnly === 'true');
+  const scope = getScope(req);
+  // Admin can see all or filter by userId
+  if (req.user.isAdmin) {
+    if (userId) {
+      const notifications = await notificationRepository.findByUserId(userId, unreadOnly === 'true');
+      return res.json(notifications);
+    }
+    const notifications = await notificationRepository.findAll();
     return res.json(notifications);
   }
-  
-  const notifications = await notificationRepository.findAll();
+  // Non-admin: only own notifications
+  const notifications = await notificationRepository.findByUserId(req.user.id, unreadOnly === 'true');
   res.json(notifications);
 }));
 
-app.post('/api/notifications', asyncHandler(async (req, res) => {
-  const newNotification = await notificationRepository.create({
-    ...req.body,
-    isRead: false
-  });
+app.post('/api/notifications', authenticateToken, requireRole(['admin','manager']), asyncHandler(async (req, res) => {
+  const newNotification = await notificationRepository.create({ ...req.body, isRead: false });
   res.status(201).json(newNotification);
 }));
 
-app.put('/api/notifications/:id/read', asyncHandler(async (req, res) => {
+app.put('/api/notifications/:id/read', authenticateToken, asyncHandler(async (req, res) => {
+  const notification = await notificationRepository.findById(req.params.id);
+  if (!notification) return res.status(404).json({ error: 'Notification not found' });
+  if (!req.user.isAdmin && notification.user_id !== req.user.id) return res.status(404).json({ error: 'Notification not found' });
   const updated = await notificationRepository.markAsRead(req.params.id);
-  if (!updated) return res.status(404).json({ error: 'Notification not found' });
   res.json(updated);
 }));
 
-app.put('/api/notifications/mark-all-read', asyncHandler(async (req, res) => {
-  const { userId } = req.body;
-  await notificationRepository.markAllAsRead(userId);
+app.put('/api/notifications/mark-all-read', authenticateToken, asyncHandler(async (req, res) => {
+  const targetUserId = req.user.isAdmin ? (req.body.userId || req.user.id) : req.user.id;
+  await notificationRepository.markAllAsRead(targetUserId);
   res.json({ message: 'All notifications marked as read' });
 }));
 
-// ==================== SETTINGS ====================
-app.get('/api/settings', asyncHandler(async (req, res) => {
+// ==================== SETTINGS - ADMIN ONLY (no scoping) ====================
+app.get('/api/settings', authenticateToken, requireRole('admin'), asyncHandler(async (req, res) => {
   const settings = await settingsRepository.getAll();
   res.json(settings);
 }));
 
-app.put('/api/settings', asyncHandler(async (req, res) => {
+app.put('/api/settings', authenticateToken, requirePermission('settings.update'), asyncHandler(async (req, res) => {
   const { updatedBy, ...settings } = req.body;
-  const updated = await settingsRepository.updateMultiple(settings, updatedBy);
+  const updated = await settingsRepository.updateMultiple(settings, updatedBy || req.user.id);
   res.json(updated);
 }));
 
-app.put('/api/settings/:key', asyncHandler(async (req, res) => {
+app.put('/api/settings/:key', authenticateToken, requirePermission('settings.update'), asyncHandler(async (req, res) => {
   const { value, type, updatedBy, description } = req.body;
-  const updated = await settingsRepository.set(req.params.key, value, type, updatedBy, description);
+  const updated = await settingsRepository.set(req.params.key, value, type, updatedBy || req.user.id, description);
   res.json(updated);
 }));
 
-// ==================== REPORTS ====================
-app.get('/api/reports/revenue', asyncHandler(async (req, res) => {
-  // Generate last 6 months of data
-  const months = [];
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Des'];
-  
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date();
-    d.setMonth(d.getMonth() - i);
-    const period = d.toISOString().slice(0, 7);
-    const monthName = monthNames[d.getMonth()];
-    
-    const roomRevenue = await paymentRepository.getRevenueByPeriod(period);
-    const laundryRevenue = await laundryRepository.getRevenueByPeriod(
-      `${period}-01`,
-      `${period}-${new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()}`
-    );
-    
-    months.push({
-      month: monthName,
-      roomRevenue: parseFloat(roomRevenue) || 0,
-      laundryRevenue: parseFloat(laundryRevenue) || 0,
-      totalRevenue: (parseFloat(roomRevenue) || 0) + (parseFloat(laundryRevenue) || 0)
-    });
-  }
-  
-  res.json(months);
-}));
-
-app.get('/api/reports/occupancy', asyncHandler(async (req, res) => {
-  const rooms = await roomRepository.findAll();
-  const totalRooms = rooms.length;
-  
-  // Generate last 6 months of occupancy data
-  const months = [];
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Des'];
-  
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date();
-    d.setMonth(d.getMonth() - i);
-    const monthName = monthNames[d.getMonth()];
-    
-    // This is simplified - in real app, you'd track historical occupancy
-    const occupied = rooms.filter(r => r.status === 'occupied').length;
-    const vacant = rooms.filter(r => r.status === 'available').length;
-    
-    months.push({
-      month: monthName,
-      occupied,
-      vacant,
-      rate: totalRooms > 0 ? Math.round((occupied / totalRooms) * 1000) / 10 : 0
-    });
-  }
-  
-  res.json(months);
-}));
-
-app.get('/api/reports/expenses-by-category', asyncHandler(async (req, res) => {
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  
-  const expenses = await expenseRepository.getByCategory(
-    null,
-    startOfMonth.toISOString().split('T')[0],
-    new Date().toISOString().split('T')[0]
-  );
-  
-  const total = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
-  
-  const data = expenses.map(e => ({
-    category: e.category,
-    amount: parseFloat(e.amount),
-    percentage: total > 0 ? Math.round((e.amount / total) * 1000) / 10 : 0
-  }));
-  
+// ==================== REPORTS - SCOPED (Step 4) ====================
+app.get('/api/reports/revenue', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const { propertyId } = req.query;
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const data = await reportsRepository.getRevenue({ ...scope, propertyId });
   res.json(data);
 }));
 
-// ==================== USERS ====================
-app.get('/api/users', authenticateToken, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    'SELECT id, username, email, full_name, role, is_active, created_at FROM users WHERE is_active = true ORDER BY full_name, username'
-  );
+app.get('/api/reports/occupancy', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const { propertyId } = req.query;
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const data = await reportsRepository.getOccupancy({ ...scope, propertyId });
+  res.json(data);
+}));
+
+app.get('/api/reports/expenses-by-category', authenticateToken, asyncHandler(async (req, res) => {
+  const scope = getScope(req);
+  const { propertyId, startDate, endDate } = req.query;
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' });
+  const startOfMonth = new Date(); startOfMonth.setDate(1);
+  const data = await reportsRepository.getExpensesByCategory({
+    ...scope,
+    propertyId,
+    startDate: startDate || startOfMonth.toISOString().split('T')[0],
+    endDate: endDate || new Date().toISOString().split('T')[0]
+  });
+  res.json(data);
+}));
+
+// ==================== USERS - ADMIN ====================
+app.get('/api/users', authenticateToken, requirePermission('users.view'), asyncHandler(async (req, res) => {
+  const result = await pool.query('SELECT id, username, email, full_name, role, is_active, created_at FROM users WHERE is_active = true ORDER BY full_name, username');
   res.json(result.rows);
 }));
 
-// ==================== ERROR HANDLING ====================
+// ==================== AUDIT LOGS - ADMIN ONLY ====================
+app.get('/api/audit-logs', authenticateToken, requireRole('admin'), asyncHandler(async (req, res) => {
+  const { limit = 100, offset = 0 } = req.query;
+  const result = await pool.query('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
+  res.json(result.rows);
+}));
+
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  res.status(500).json({ 
-    error: err.message || 'Internal server error',
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-  });
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error', stack: process.env.NODE_ENV === 'development' ? err.stack : undefined });
 });
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
 
-// Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Kos Ana API Server running on port ${PORT}`);
   console.log(`📊 API URL: http://0.0.0.0: ${PORT}/api`);
-  console.log(`💾 Database: PostgreSQL`);
+  console.log(`💾 Database: PostgreSQL - Scoped v4 (Step 4 complete - laundry, AC, room cleaning, reports, notifications, settings admin-only)`);
 });
-
 
 module.exports = app;

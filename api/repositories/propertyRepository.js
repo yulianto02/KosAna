@@ -1,15 +1,26 @@
-// api/repositories/propertyRepository.js
-
+// api/repositories/propertyRepository.js - Scoped version adapted to your existing class
 const pool = require('../db');
+const { buildPropertyFilter } = require('../utils/scope');
 
 class PropertyRepository {
-  async findAll() {
-    const result = await pool.query('SELECT * FROM properties ORDER BY created_at DESC');
+  // Now accepts: findAll() | findAll(propertyIdsArray) | findAll({ propertyIds })
+  async findAll(optionsOrIds) {
+    let propertyIds = null;
+    if (Array.isArray(optionsOrIds)) propertyIds = optionsOrIds;
+    else if (optionsOrIds && optionsOrIds.propertyIds) propertyIds = optionsOrIds.propertyIds;
+
+    const { clause, params } = buildPropertyFilter(propertyIds, 'properties.id', 0);
+    const query = `SELECT * FROM properties WHERE 1=1 ${clause} ORDER BY created_at DESC`;
+    const result = await pool.query(query, params);
     return result.rows;
   }
 
-  async findById(id) {
-    const result = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
+  async findById(id, options) {
+    let propertyIds = options?.propertyIds || null;
+    if (Array.isArray(options)) propertyIds = options;
+
+    const { clause, params } = buildPropertyFilter(propertyIds, 'properties.id', 1);
+    const result = await pool.query(`SELECT * FROM properties WHERE id = $1 ${clause}`, [id, ...params]);
     return result.rows[0];
   }
 
@@ -41,7 +52,12 @@ class PropertyRepository {
     return result.rows[0];
   }
 
-  async update(id, data) {
+  async update(id, data, options) {
+    // Scope check first
+    if (options) {
+      const existing = await this.findById(id, options);
+      if (!existing) return null;
+    }
     const query = `
       UPDATE properties SET
         name = $1, address = $2, city = $3, district = $4, postal_code = $5,
@@ -71,7 +87,11 @@ class PropertyRepository {
     return result.rows[0];
   }
 
-  async delete(id) {
+  async delete(id, options) {
+    if (options) {
+      const existing = await this.findById(id, options);
+      if (!existing) return null;
+    }
     await pool.query('DELETE FROM properties WHERE id = $1', [id]);
     return { message: 'Property deleted' };
   }

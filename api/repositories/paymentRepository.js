@@ -1,7 +1,10 @@
+// api/repositories/paymentRepository.js - Scoped, adapted to your existing implementation
 const pool = require('../db');
+const { buildPropertyFilter } = require('../utils/scope');
 
 class PaymentRepository {
   async findAll(params = {}) {
+    // params can be: { status, tenantId, tenant_id, propertyId, property_id, propertyIds }
     let query = 'SELECT * FROM payments';
     const conditions = [];
     const values = [];
@@ -12,15 +15,32 @@ class PaymentRepository {
       values.push(params.status);
       paramIndex++;
     }
-    if (params.tenantId) {
+    if (params.tenantId || params.tenant_id) {
       conditions.push(`tenant_id = $${paramIndex}`);
-      values.push(params.tenantId);
+      values.push(params.tenantId || params.tenant_id);
       paramIndex++;
     }
-    if (params.propertyId) {
+    const singlePropertyId = params.propertyId || params.property_id;
+    if (singlePropertyId) {
       conditions.push(`property_id = $${paramIndex}`);
-      values.push(params.propertyId);
+      values.push(singlePropertyId);
       paramIndex++;
+    }
+
+    // Scope filter
+    const propertyIds = params.propertyIds;
+    if (propertyIds) {
+      const { clause, params: scopeParams } = buildPropertyFilter(propertyIds, 'payments.property_id', values.length);
+      if (clause) {
+        if (clause.includes('1=0')) {
+          // No access
+          const result = await pool.query('SELECT * FROM payments WHERE 1=0');
+          return result.rows;
+        }
+        conditions.push(clause.replace(/^ AND /, ''));
+        values.push(...scopeParams);
+        paramIndex = values.length + 1;
+      }
     }
 
     if (conditions.length > 0) {
@@ -32,87 +52,121 @@ class PaymentRepository {
     return result.rows;
   }
 
-  async findById(id) {
-    const result = await pool.query('SELECT * FROM payments WHERE id = $1', [id]);
+  async findById(id, options) {
+    let propertyIds = null;
+    if (Array.isArray(options)) propertyIds = options;
+    else if (options && options.propertyIds) propertyIds = options.propertyIds;
+
+    let params = [id];
+    let where = 'WHERE id = $1';
+    if (propertyIds) {
+      const { clause, params: scopeParams } = buildPropertyFilter(propertyIds, 'payments.property_id', params.length);
+      where += clause;
+      params = [...params, ...scopeParams];
+    }
+    const result = await pool.query(`SELECT * FROM payments ${where}`, params);
     return result.rows[0];
   }
 
-  async findByTenantId(tenantId) {
-    const result = await pool.query(
-      'SELECT * FROM payments WHERE tenant_id = $1 ORDER BY payment_period DESC',
-      [tenantId]
-    );
+  async findByTenantId(tenantId, options) {
+    let propertyIds = options?.propertyIds || null;
+    let params = [tenantId];
+    let where = 'WHERE tenant_id = $1';
+    if (propertyIds) {
+      const { clause, params: scopeParams } = buildPropertyFilter(propertyIds, 'payments.property_id', params.length);
+      where += clause;
+      params = [...params, ...scopeParams];
+    }
+    const result = await pool.query(`SELECT * FROM payments ${where} ORDER BY payment_period DESC`, params);
     return result.rows;
   }
 
-// api/repositories/paymentRepository.js - UPDATED
-async create(data) {
-  const query = `
-    INSERT INTO payments (
-      tenant_id, room_id, property_id, payment_period, base_amount,
-      additional_person_fee, late_fee, laundry_amount, total_amount,
-      payment_method, payment_status, payment_date, due_date, notes
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-    RETURNING *
-  `;
-  const values = [
-    data.tenant_id,        // Changed from tenantId
-    data.room_id,          // Changed from roomId
-    data.property_id,      // Changed from propertyId
-    data.payment_period,   // Changed from paymentPeriod
-    data.base_amount,      // Changed from baseAmount
-    data.additional_person_fee || 0,  // Changed from additionalPersonFee
-    data.late_fee || 0,    // Changed from lateFee
-    data.laundry_amount || 0,  // Changed from laundryAmount
-    data.total_amount,     // Changed from totalAmount
-    data.payment_method || 'qris',  // Changed from paymentMethod
-    data.payment_status || 'pending',  // Changed from paymentStatus
-    data.payment_date || null,  // Changed from paymentDate
-    data.due_date,         // Changed from dueDate
-    data.notes || null
-  ];
-  const result = await pool.query(query, values);
-  return result.rows[0];
-}
+  async create(data, options) {
+    // Scope enforcement
+    if (options && options.propertyIds) {
+      const scope = options.propertyIds;
+      const pid = data.property_id || data.propertyId;
+      if (!scope.includes('*') && pid && !scope.includes(pid)) {
+        const err = new Error('Property not in scope');
+        err.status = 403;
+        throw err;
+      }
+    }
 
-async update(id, data) {
-  const query = `
-    UPDATE payments SET
-      tenant_id = $1, room_id = $2, property_id = $3, payment_period = $4,
-      base_amount = $5, additional_person_fee = $6, late_fee = $7,
-      laundry_amount = $8, total_amount = $9, payment_method = $10,
-      payment_status = $11, payment_date = $12, due_date = $13,
-      qr_code_url = $14, transaction_id = $15, payment_proof_url = $16,
-      notes = $17, paid_at = $18, updated_at = CURRENT_TIMESTAMP
-    WHERE id = $19
-    RETURNING *
-  `;
-  const values = [
-    data.tenant_id,        // Changed from tenantId
-    data.room_id,          // Changed from roomId
-    data.property_id,      // Changed from propertyId
-    data.payment_period,   // Changed from paymentPeriod
-    data.base_amount,      // Changed from baseAmount
-    data.additional_person_fee,  // Changed from additionalPersonFee
-    data.late_fee,         // Changed from lateFee
-    data.laundry_amount,   // Changed from laundryAmount
-    data.total_amount,     // Changed from totalAmount
-    data.payment_method,   // Changed from paymentMethod
-    data.payment_status,   // Changed from paymentStatus
-    data.payment_date,     // Changed from paymentDate
-    data.due_date,         // Changed from dueDate
-    data.qr_code_url || null,  // Changed from qrCodeUrl
-    data.transaction_id || null,  // Changed from transactionId
-    data.payment_proof_url || null,  // Changed from paymentProofUrl
-    data.notes,
-    data.paid_at || null,  // Changed from paidAt
-    id
-  ];
-  const result = await pool.query(query, values);
-  return result.rows[0];
-}
+    const query = `
+      INSERT INTO payments (
+        tenant_id, room_id, property_id, payment_period, base_amount,
+        additional_person_fee, late_fee, laundry_amount, total_amount,
+        payment_method, payment_status, payment_date, due_date, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING *
+    `;
+    const values = [
+      data.tenant_id || data.tenantId,
+      data.room_id || data.roomId,
+      data.property_id || data.propertyId,
+      data.payment_period || data.paymentPeriod,
+      data.base_amount || data.baseAmount,
+      data.additional_person_fee || data.additionalPersonFee || 0,
+      data.late_fee || data.lateFee || 0,
+      data.laundry_amount || data.laundryAmount || 0,
+      data.total_amount || data.totalAmount,
+      data.payment_method || data.paymentMethod || 'qris',
+      data.payment_status || data.paymentStatus || 'pending',
+      data.payment_date || data.paymentDate || null,
+      data.due_date || data.dueDate,
+      data.notes || null
+    ];
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  }
 
-  async markAsPaid(id, paymentData = {}) {
+  async update(id, data, options) {
+    if (options) {
+      const existing = await this.findById(id, options);
+      if (!existing) return null;
+    }
+    const query = `
+      UPDATE payments SET
+        tenant_id = $1, room_id = $2, property_id = $3, payment_period = $4,
+        base_amount = $5, additional_person_fee = $6, late_fee = $7,
+        laundry_amount = $8, total_amount = $9, payment_method = $10,
+        payment_status = $11, payment_date = $12, due_date = $13,
+        qr_code_url = $14, transaction_id = $15, payment_proof_url = $16,
+        notes = $17, paid_at = $18, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $19
+      RETURNING *
+    `;
+    const values = [
+      data.tenant_id || data.tenantId,
+      data.room_id || data.roomId,
+      data.property_id || data.propertyId,
+      data.payment_period || data.paymentPeriod,
+      data.base_amount || data.baseAmount,
+      data.additional_person_fee || data.additionalPersonFee,
+      data.late_fee || data.lateFee,
+      data.laundry_amount || data.laundryAmount,
+      data.total_amount || data.totalAmount,
+      data.payment_method || data.paymentMethod,
+      data.payment_status || data.paymentStatus,
+      data.payment_date || data.paymentDate,
+      data.due_date || data.dueDate,
+      data.qr_code_url || data.qrCodeUrl || null,
+      data.transaction_id || data.transactionId || null,
+      data.payment_proof_url || data.paymentProofUrl || null,
+      data.notes,
+      data.paid_at || data.paidAt || null,
+      id
+    ];
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  }
+
+  async markAsPaid(id, paymentData = {}, options) {
+    if (options) {
+      const existing = await this.findById(id, options);
+      if (!existing) return null;
+    }
     const result = await pool.query(
       `UPDATE payments SET 
         payment_status = 'paid',
@@ -121,34 +175,70 @@ async update(id, data) {
         updated_at = CURRENT_TIMESTAMP
        WHERE id = $2
        RETURNING *`,
-      [paymentData.paymentDate || null, id]
+      [paymentData.paymentDate || paymentData.payment_date || null, id]
     );
     return result.rows[0];
   }
 
-  async delete(id) {
+  async delete(id, options) {
+    if (options) {
+      const existing = await this.findById(id, options);
+      if (!existing) return null;
+    }
     await pool.query('DELETE FROM payments WHERE id = $1', [id]);
     return { message: 'Payment deleted' };
   }
 
-  async getPendingPayments() {
+  async getPendingPayments(options = {}) {
+    let propertyIds = options.propertyIds || null;
+    let params = [];
+    let where = `WHERE payments.payment_status = 'pending'`;
+    if (propertyIds) {
+      const { clause, params: scopeParams } = buildPropertyFilter(propertyIds, 'payments.property_id', params.length);
+      where += clause;
+      params = [...params, ...scopeParams];
+    }
     const result = await pool.query(`
       SELECT p.*, t.full_name as tenant_name, r.room_number
       FROM payments p
       JOIN tenants t ON p.tenant_id = t.id
       JOIN rooms r ON p.room_id = r.id
-      WHERE p.payment_status = 'pending'
+      ${where}
       ORDER BY p.due_date ASC
-    `);
+    `, params);
     return result.rows;
   }
 
-  async getRevenueByPeriod(period) {
+  async getRevenueByPeriod(period, options = {}) {
+    // options can be string legacy or object
+    let propertyIds = null;
+    let propertyId = null;
+    if (typeof options === 'string') {
+      // legacy not used
+    } else if (options && options.propertyIds) {
+      propertyIds = options.propertyIds;
+    } else if (options && (options.propertyId || options.property_id)) {
+      propertyId = options.propertyId || options.property_id;
+    } else if (Array.isArray(options)) {
+      propertyIds = options;
+    }
+
+    let params = [period];
+    let where = `WHERE payment_status = 'paid' AND payment_period = $1`;
+
+    if (propertyId) {
+      params.push(propertyId);
+      where += ` AND property_id = $${params.length}`;
+    }
+    if (propertyIds) {
+      const { clause, params: scopeParams } = buildPropertyFilter(propertyIds, 'payments.property_id', params.length);
+      where += clause;
+      params = [...params, ...scopeParams];
+    }
+
     const result = await pool.query(
-      `SELECT COALESCE(SUM(total_amount), 0) as revenue
-       FROM payments 
-       WHERE payment_status = 'paid' AND payment_period = $1`,
-      [period]
+      `SELECT COALESCE(SUM(total_amount), 0) as revenue FROM payments ${where}`,
+      params
     );
     return result.rows[0].revenue;
   }
