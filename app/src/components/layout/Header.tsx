@@ -30,7 +30,6 @@ export function Header({ currentUser, onLogout, pageTitle, onMenuClick }: Header
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   useEffect(() => {
-    // Load notifications
     const loadNotifications = async () => {
       try {
         const data = await notificationsAPI.getAll(currentUser?.id, true);
@@ -39,7 +38,7 @@ export function Header({ currentUser, onLogout, pageTitle, onMenuClick }: Header
         console.error('Failed to load notifications:', error);
       }
     };
-    loadNotifications();
+    if (currentUser?.id) loadNotifications();
   }, [currentUser]);
 
   return (
@@ -80,16 +79,10 @@ export function Header({ currentUser, onLogout, pageTitle, onMenuClick }: Header
           {/* Notifications */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative hover:bg-gray-100 h-11 w-11 md:h-10 md:w-10"
-              >
+              <Button variant="ghost" size="icon" className="relative hover:bg-gray-100 h-11 w-11 md:h-10 md:w-10">
                 <Bell className="w-5 h-5 text-gray-600" />
                 {unreadCount > 0 && (
-                  <Badge
-                    className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-red-500 text-white text-xs"
-                  >
+                  <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-red-500 text-white text-xs">
                     {unreadCount}
                   </Badge>
                 )}
@@ -104,33 +97,20 @@ export function Header({ currentUser, onLogout, pageTitle, onMenuClick }: Header
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               {notifications.length === 0 ? (
-                <div className="py-8 text-center text-gray-500 text-sm">
-                  Tidak ada notifikasi
-                </div>
+                <div className="py-8 text-center text-gray-500 text-sm">Tidak ada notifikasi</div>
               ) : (
                 notifications.slice(0, 5).map((notification) => (
-                  <DropdownMenuItem
-                    key={notification.id}
-                    className={cn(
-                      "flex flex-col items-start py-3 px-4 cursor-pointer",
-                      !notification.isRead && "bg-blue-50"
-                    )}
-                  >
+                  <DropdownMenuItem key={notification.id} className={cn("flex flex-col items-start py-3 px-4 cursor-pointer", !notification.isRead && "bg-blue-50")}>
                     <span className="font-medium text-sm">{notification.title}</span>
                     <span className="text-xs text-gray-500 line-clamp-2">{notification.message}</span>
                     <span className="text-xs text-gray-400 mt-1">
-                      {new Date(notification.created_at).toLocaleTimeString('id-ID', {
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
+                      {new Date(notification.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </DropdownMenuItem>
                 ))
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="justify-center text-[#1A3D5C] font-medium">
-                Lihat semua notifikasi
-              </DropdownMenuItem>
+              <DropdownMenuItem className="justify-center text-[#1A3D5C] font-medium">Lihat semua notifikasi</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -142,12 +122,8 @@ export function Header({ currentUser, onLogout, pageTitle, onMenuClick }: Header
                   <User className="w-5 h-5 text-white" />
                 </div>
                 <div className="text-left hidden md:block">
-                  <p className="text-sm font-medium text-gray-900">
-                    {currentUser?.fullName || 'Administrator'}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {currentUser?.email || 'admin@kosana.id'}
-                  </p>
+                  <p className="text-sm font-medium text-gray-900">{currentUser?.fullName || currentUser?.full_name || 'Administrator'}</p>
+                  <p className="text-xs text-gray-500">{currentUser?.email || currentUser?.username || 'admin@kosana.id'}</p>
                 </div>
                 <ChevronDown className="w-4 h-4 text-gray-400 hidden md:block" />
               </Button>
@@ -155,38 +131,20 @@ export function Header({ currentUser, onLogout, pageTitle, onMenuClick }: Header
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>Akun Saya</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <User className="w-4 h-4 mr-2" />
-                Profil
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Settings className="w-4 h-4 mr-2" />
-                Pengaturan
-              </DropdownMenuItem>
+              <DropdownMenuItem><User className="w-4 h-4 mr-2" />Profil</DropdownMenuItem>
+              <DropdownMenuItem><Settings className="w-4 h-4 mr-2" />Pengaturan</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="text-red-600"
-                onClick={onLogout}
-              >
-                <LogOut className="w-4 h-4 mr-2" />
-                Keluar
-              </DropdownMenuItem>
+              <DropdownMenuItem className="text-red-600" onClick={onLogout}><LogOut className="w-4 h-4 mr-2" />Keluar</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
-      {/* Search (mobile — second row, full width) */}
+      {/* Search mobile */}
       <div className="md:hidden px-4 pb-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input
-            type="search"
-            placeholder="Cari penghuni, kamar, atau transaksi..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 pr-4 h-11 text-base bg-gray-50 border-gray-200 focus:bg-white focus:border-[#1A3D5C] transition-colors"
-          />
+          <Input type="search" placeholder="Cari penghuni, kamar, atau transaksi..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 pr-4 h-11 text-base bg-gray-50 border-gray-200 focus:bg-white focus:border-[#1A3D5C] transition-colors" />
         </div>
       </div>
     </header>

@@ -2,45 +2,39 @@ import { getToken, getRefreshToken as getRefresh, setTokens as saveTokens } from
 import { API_BASE_URL } from '../config/api';
 import type { RoomCleaningSchedule, CleaningStats } from '@/types';
 
-// Debug (keep your existing console)
 console.log('API Base:', API_BASE_URL);
+
+// Normalize endpoint: prevent /api/api/ duplication
+function normalizeEndpoint(endpoint: string): string {
+  // API_BASE_URL may already end with /api
+  // If endpoint starts with /api/, strip it -> /api/users => /users
+  if (API_BASE_URL.endsWith('/api') && endpoint.startsWith('/api/')) {
+    return endpoint.slice(4); // remove /api
+  }
+  return endpoint;
+}
 
 let isRefreshing = false;
 let failedQueue: Array<{ resolve: (t: string) => void; reject: (e: any) => void }> = [];
 
 function processQueue(error: any, token: string | null = null) {
-  failedQueue.forEach(p => {
-    if (error) p.reject(error);
-    else p.resolve(token!);
-  });
+  failedQueue.forEach(p => { if (error) p.reject(error); else p.resolve(token!); });
   failedQueue = [];
 }
 
 async function refreshAccessToken(): Promise<string> {
   const refreshToken = getRefresh ? getRefresh() : localStorage.getItem('kosana_refresh_token');
   if (!refreshToken) throw new Error('No refresh token');
-
-  if (isRefreshing) {
-    return new Promise<string>((resolve, reject) => {
-      failedQueue.push({ resolve, reject });
-    });
-  }
-
+  if (isRefreshing) return new Promise<string>((resolve, reject) => { failedQueue.push({ resolve, reject }); });
   isRefreshing = true;
   try {
-    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken })
+    const res = await fetch(`${API_BASE_URL}/auth/refresh`.replace('/api/api/', '/api/'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken })
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as any).error || 'Refresh failed');
-    }
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error((err as any).error || 'Refresh failed'); }
     const data = await res.json();
     const newAccess = (data as any).accessToken || (data as any).token;
     const newRefresh = (data as any).refreshToken || refreshToken;
-    // save
     if (saveTokens) saveTokens(newAccess, newRefresh);
     else {
       localStorage.setItem('kosana_token', newAccess);
@@ -56,28 +50,23 @@ async function refreshAccessToken(): Promise<string> {
     localStorage.removeItem('kosana_refresh_token');
     window.location.href = '/login';
     throw e;
-  } finally {
-    isRefreshing = false;
-  }
+  } finally { isRefreshing = false; }
 }
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit & { _retry?: boolean }): Promise<T> {
   const token = getToken();
+  const cleanEndpoint = normalizeEndpoint(endpoint);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     ...((options?.headers as Record<string, string>) || {})
   };
-
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers
-  });
+  const url = `${API_BASE_URL}${cleanEndpoint}`;
+  const response = await fetch(url, { ...options, headers });
 
   if (response.status === 401 && !(options as any)?._retry) {
     const hasRefresh = localStorage.getItem('kosana_refresh_token');
     if (!hasRefresh) {
-      // no refresh, logout via auth helper
       localStorage.removeItem('kosana_token');
       localStorage.removeItem('kosana_access_token');
       window.location.href = '/login';
@@ -85,32 +74,26 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit & { _retry?: 
     }
     try {
       const newToken = await refreshAccessToken();
-      return fetchAPI<T>(endpoint, {
-        ...options,
-        _retry: true,
-        headers: {
-          ...((options?.headers as Record<string, string>) || {}),
-          'Authorization': `Bearer ${newToken}`,
-          'Content-Type': 'application/json'
-        }
-      } as any);
-    } catch {
-      throw new Error('Session expired');
-    }
+      return fetchAPI<T>(endpoint, { ...options, _retry: true, headers: { ...((options?.headers as Record<string, string>) || {}), 'Authorization': `Bearer ${newToken}`, 'Content-Type': 'application/json' } } as any);
+    } catch { throw new Error('Session expired'); }
   }
-
   if (response.status === 403) throw new Error('You do not have permission to perform this action.');
-
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error((error as any).error || `HTTP ${response.status}`);
   }
-
   if (response.status === 204) return undefined as T;
   return response.json();
 }
 
-// [STRIPPED 75 bytes] All your APIs - unchanged
+// Generic axios-like wrapper used by Users.tsx / Roles.tsx
+export const api = {
+  get: <T>(url: string): Promise<{ data: T }> => fetchAPI<T>(url).then(data => ({ data } as any)),
+  post: <T>(url: string, body?: any): Promise<{ data: T }> => fetchAPI<T>(url, { method: 'POST', body: body ? JSON.stringify(body) : undefined }).then(data => ({ data } as any)),
+  put: <T>(url: string, body?: any): Promise<{ data: T }> => fetchAPI<T>(url, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }).then(data => ({ data } as any)),
+  delete: <T>(url: string): Promise<{ data: T }> => fetchAPI<T>(url, { method: 'DELETE' }).then(data => ({ data } as any)),
+};
+
 export const dashboardAPI = { getStats: (): Promise<any> => fetchAPI('/dashboard/stats') };
 export const propertiesAPI = {
   getAll: (): Promise<any[]> => fetchAPI('/properties'),
@@ -198,11 +181,7 @@ export const acCleaningAPI = {
 export const notificationsAPI = {
   getAll: (userId?: string, unreadOnly?: boolean): Promise<any[]> => {
     let query = '';
-    if (userId) {
-      const params = new URLSearchParams({ userId });
-      if (unreadOnly) params.append('unreadOnly', 'true');
-      query = `?${params.toString()}`;
-    }
+    if (userId) { const params = new URLSearchParams({ userId }); if (unreadOnly) params.append('unreadOnly', 'true'); query = `?${params.toString()}`; }
     return fetchAPI(`/notifications${query}`);
   },
   create: (data: any): Promise<any> => fetchAPI('/notifications', { method: 'POST', body: JSON.stringify(data) }),
@@ -219,12 +198,22 @@ export const reportsAPI = {
   getOccupancy: (): Promise<any[]> => fetchAPI('/reports/occupancy'),
   getExpensesByCategory: (): Promise<any[]> => fetchAPI('/reports/expenses-by-category'),
 };
+
+// Step 6 - FIXED: use /users not /api/users
 export const usersAPI = {
   getAll: (): Promise<any[]> => fetchAPI('/users'),
+  getSimple: (): Promise<any[]> => fetchAPI('/users/simple'),
   getById: (id: string): Promise<any> => fetchAPI(`/users/${id}`),
   create: (data: any): Promise<any> => fetchAPI('/users', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: any): Promise<any> => fetchAPI(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  delete: (id: string): Promise<void> => fetchAPI(`/users/${id}`, { method: 'DELETE' }),
+  setStatus: (id: string, is_active: boolean): Promise<any> => fetchAPI(`/users/${id}/status`, { method: 'PUT', body: JSON.stringify({ is_active }) }),
+  resetPassword: (id: string, new_password: string): Promise<any> => fetchAPI(`/users/${id}/reset-password`, { method: 'POST', body: JSON.stringify({ new_password }) }),
+  setAssignments: (id: string, assignments: { propertyId: string; roleId: string; isOwner?: boolean }[]): Promise<any> => fetchAPI(`/users/${id}/assignments`, { method: 'PUT', body: JSON.stringify(assignments) }),
+  revokeSessions: (id: string): Promise<any> => fetchAPI(`/auth/revoke/${id}`, { method: 'POST' }),
 };
 
-export default { fetchAPI };
+export const rolesAPI = {
+  getAll: (): Promise<{ roles: any[]; allPermissions: any[]; modules: string[] }> => fetchAPI('/roles'),
+};
+
+export default { fetchAPI, api };

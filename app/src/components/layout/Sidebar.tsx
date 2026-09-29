@@ -1,3 +1,4 @@
+// app/src/components/layout/Sidebar.tsx - Step 6 + Access Control section (users.manage)
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -9,6 +10,7 @@ import {
   Building2,
   DoorOpen,
   Users,
+  ShieldCheck,
   CreditCard,
   Receipt,
   Sparkles,
@@ -24,7 +26,7 @@ import {
   X
 } from 'lucide-react';
 
-export type Page = 'dashboard' | 'properties' | 'rooms' | 'tenants' | 'payments' | 'expenses' | 'room-cleaning' | 'laundry' | 'maintenance' | 'ac-cleaning' | 'reports' | 'settings';
+export type Page = 'dashboard' | 'properties' | 'rooms' | 'tenants' | 'payments' | 'expenses' | 'room-cleaning' | 'laundry' | 'maintenance' | 'ac-cleaning' | 'reports' | 'settings' | 'users' | 'roles';
 
 export const PAGE_LABELS: Record<Page, string> = {
   dashboard: 'Dashboard',
@@ -39,6 +41,8 @@ export const PAGE_LABELS: Record<Page, string> = {
   'ac-cleaning': 'Jadwal AC',
   reports: 'Laporan',
   settings: 'Pengaturan',
+  users: 'Pengguna',
+  roles: 'Peran & Izin',
 };
 
 interface SidebarProps {
@@ -54,22 +58,26 @@ interface NavConfig {
   id: Page;
   label: string;
   icon: React.ElementType;
-  permissions: string[]; // allow multiple: view OR read
+  permissions: string[];
+  section?: 'main' | 'access';
 }
 
 const navConfig: NavConfig[] = [
-  { id: 'dashboard', label: PAGE_LABELS.dashboard, icon: LayoutDashboard, permissions: ['dashboard.view','dashboard.read'] },
-  { id: 'properties', label: PAGE_LABELS.properties, icon: Building2, permissions: ['properties.view','properties.read'] },
-  { id: 'rooms', label: PAGE_LABELS.rooms, icon: DoorOpen, permissions: ['rooms.view','rooms.read'] },
-  { id: 'tenants', label: PAGE_LABELS.tenants, icon: Users, permissions: ['tenants.view','tenants.read'] },
-  { id: 'payments', label: PAGE_LABELS.payments, icon: CreditCard, permissions: ['payments.view','payments.read'] },
-  { id: 'expenses', label: PAGE_LABELS.expenses, icon: Receipt, permissions: ['expenses.view','expenses.read'] },
-  { id: 'room-cleaning', label: PAGE_LABELS['room-cleaning'], icon: Sparkles, permissions: ['room_cleaning.view','room_cleaning.read'] },
-  { id: 'laundry', label: PAGE_LABELS.laundry, icon: Shirt, permissions: ['laundry.view','laundry.read'] },
-  { id: 'maintenance', label: PAGE_LABELS.maintenance, icon: Wrench, permissions: ['maintenance.view','maintenance.read'] },
-  { id: 'ac-cleaning', label: PAGE_LABELS['ac-cleaning'], icon: Wind, permissions: ['ac_cleaning.view','ac_cleaning.read'] },
-  { id: 'reports', label: PAGE_LABELS.reports, icon: BarChart3, permissions: ['reports.view','reports.read'] },
-  { id: 'settings', label: PAGE_LABELS.settings, icon: Settings, permissions: ['settings.view','settings.read'] },
+  { id: 'dashboard', label: PAGE_LABELS.dashboard, icon: LayoutDashboard, permissions: ['dashboard.view','dashboard.read'], section: 'main' },
+  { id: 'properties', label: PAGE_LABELS.properties, icon: Building2, permissions: ['properties.view','properties.read'], section: 'main' },
+  { id: 'rooms', label: PAGE_LABELS.rooms, icon: DoorOpen, permissions: ['rooms.view','rooms.read'], section: 'main' },
+  { id: 'tenants', label: PAGE_LABELS.tenants, icon: Users, permissions: ['tenants.view','tenants.read'], section: 'main' },
+  { id: 'payments', label: PAGE_LABELS.payments, icon: CreditCard, permissions: ['payments.view','payments.read'], section: 'main' },
+  { id: 'expenses', label: PAGE_LABELS.expenses, icon: Receipt, permissions: ['expenses.view','expenses.read'], section: 'main' },
+  { id: 'room-cleaning', label: PAGE_LABELS['room-cleaning'], icon: Sparkles, permissions: ['room_cleaning.view','room_cleaning.read'], section: 'main' },
+  { id: 'laundry', label: PAGE_LABELS.laundry, icon: Shirt, permissions: ['laundry.view','laundry.read'], section: 'main' },
+  { id: 'maintenance', label: PAGE_LABELS.maintenance, icon: Wrench, permissions: ['maintenance.view','maintenance.read'], section: 'main' },
+  { id: 'ac-cleaning', label: PAGE_LABELS['ac-cleaning'], icon: Wind, permissions: ['ac_cleaning.view','ac_cleaning.read'], section: 'main' },
+  { id: 'reports', label: PAGE_LABELS.reports, icon: BarChart3, permissions: ['reports.view','reports.read'], section: 'main' },
+  { id: 'settings', label: PAGE_LABELS.settings, icon: Settings, permissions: ['settings.view','settings.read'], section: 'main' },
+  // Step 6 - Access Control (only users.manage)
+  { id: 'users', label: PAGE_LABELS.users, icon: Users, permissions: ['users.manage'], section: 'access' },
+  { id: 'roles', label: PAGE_LABELS.roles, icon: ShieldCheck, permissions: ['users.manage'], section: 'access' },
 ];
 
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse, onNavigate, variant = 'sidebar' }: SidebarProps) {
@@ -91,6 +99,30 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
     if (isAdmin) return true;
     return item.permissions.some(p => hasPermission(p));
   });
+
+  const mainItems = visibleItems.filter(i => (i.section || 'main') === 'main');
+  const accessItems = visibleItems.filter(i => i.section === 'access');
+
+  const NavButton = ({ item }: { item: NavConfig }) => {
+    const Icon = item.icon;
+    const isActive = currentPage === item.id;
+    return (
+      <button
+        key={item.id}
+        onClick={() => handleNavClick(item.id)}
+        className={cn(
+          "w-full flex items-center gap-3 px-3 rounded-lg transition-all duration-200",
+          isDrawer ? "py-3 min-h-11" : "py-2.5",
+          isActive ? "bg-[#D4A84B] text-white shadow-lg" : "text-white/70 hover:bg-white/10 hover:text-white",
+          !isDrawer && collapsed && "justify-center px-2"
+        )}
+        title={!isDrawer && collapsed ? item.label : undefined}
+      >
+        <Icon className={cn("w-5 h-5 flex-shrink-0", isActive && "scale-110")} />
+        {(!collapsed || isDrawer) && <span className="text-sm font-medium">{item.label}</span>}
+      </button>
+    );
+  };
 
   return (
     <div className={cn(
@@ -122,26 +154,24 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
 
       <ScrollArea className="flex-1 py-4">
         <nav className="px-2 space-y-1">
-          {visibleItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentPage === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => handleNavClick(item.id)}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 rounded-lg transition-all duration-200",
-                  isDrawer ? "py-3 min-h-11" : "py-2.5",
-                  isActive ? "bg-[#D4A84B] text-white shadow-lg" : "text-white/70 hover:bg-white/10 hover:text-white",
-                  !isDrawer && collapsed && "justify-center px-2"
+          {mainItems.map((item) => <NavButton key={item.id} item={item} />)}
+          
+          {accessItems.length > 0 && (
+            <>
+              <div className={cn("pt-4 mt-4 border-t border-white/10", !isDrawer && collapsed && "px-2")}>
+                {(!collapsed || isDrawer) && (
+                  <p className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-white/40 uppercase">Access Control</p>
                 )}
-                title={!isDrawer && collapsed ? item.label : undefined}
-              >
-                <Icon className={cn("w-5 h-5 flex-shrink-0", isActive && "scale-110")} />
-                {(!collapsed || isDrawer) && <span className="text-sm font-medium">{item.label}</span>}
-              </button>
-            );
-          })}
+                {collapsed && !isDrawer && (
+                  <div className="h-px bg-white/10 mb-3" />
+                )}
+              </div>
+              <div className="space-y-1">
+                {accessItems.map((item) => <NavButton key={item.id} item={item} />)}
+              </div>
+            </>
+          )}
+
           {visibleItems.length === 0 && (
             <div className="px-3 py-4 text-xs text-white/40 text-center">
               Tidak ada akses menu

@@ -1,4 +1,4 @@
-// api/repositories/roomCleaningRepository.js - Scoped version
+// api/repositories/roomCleaningRepository.js - FIXED: 0 falsy bug + stats safe + assigned_to null handling
 const pool = require('../db');
 const { buildPropertyFilter } = require('../utils/scope');
 
@@ -30,6 +30,14 @@ class RoomCleaningRepository {
   }
 
   async findById(id, options) {
+    // Guard against route-order bug where id='stats'/'slots' is passed as UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(id)) {
+      // If it's not a UUID (e.g. "stats"), don't query - prevents 500 invalid input syntax for type uuid
+      if (['stats','slots','generate','room'].includes(id)) {
+        return null;
+      }
+    }
     const propertyIds = options?.propertyIds || null;
     let params = [id];
     let where = 'WHERE rcs.id = $1';
@@ -59,7 +67,6 @@ class RoomCleaningRepository {
   }
 
   async findByRoomAndWeek(roomId, weekStartDate, options = {}) {
-    // Check room's property via rooms table if scope provided
     let propertyIds = options.propertyIds || null;
     if (propertyIds && !propertyIds.includes('*')) {
       const roomCheck = await pool.query('SELECT property_id FROM rooms WHERE id = $1', [roomId]);
@@ -94,19 +101,29 @@ class RoomCleaningRepository {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
     `;
+    // FIX: Use ?? not || for day_of_week and time_slot because 0 is valid and falsy!
+    // Also normalize empty assigned_to ('', 'self') to null to avoid FK error
+    let assignedToRaw = data.assigned_to ?? data.assignedTo;
+    if (assignedToRaw === '' || assignedToRaw === 'self') assignedToRaw = null;
+
     const values = [
-      data.room_id || data.roomId,
-      data.property_id || data.propertyId,
-      data.week_start_date || data.weekStartDate,
-      data.day_of_week || data.dayOfWeek,
-      data.time_slot || data.timeSlot,
-      data.scheduled_date || data.scheduledDate,
+      data.room_id ?? data.roomId,
+      data.property_id ?? data.propertyId,
+      data.week_start_date ?? data.weekStartDate,
+      data.day_of_week ?? data.dayOfWeek ?? data.day_of_week, // explicit 0 allowed
+      data.time_slot ?? data.timeSlot,
+      data.scheduled_date ?? data.scheduledDate,
       data.status || 'scheduled',
-      data.assigned_to || data.assignedTo,
-      data.estimated_duration_minutes || data.estimatedDurationMinutes || 45,
-      data.notes,
+      assignedToRaw,
+      data.estimated_duration_minutes ?? data.estimatedDurationMinutes ?? 45,
+      data.notes ?? null,
       data.is_recurring !== false
     ];
+
+    // Ensure day_of_week and time_slot are numbers (0 allowed)
+    values[3] = values[3] !== undefined && values[3] !== null ? parseInt(values[3]) : values[3];
+    values[4] = values[4] !== undefined && values[4] !== null ? parseInt(values[4]) : values[4];
+
     const result = await pool.query(query, values);
     return result.rows[0];
   }
@@ -116,6 +133,9 @@ class RoomCleaningRepository {
       const existing = await this.findById(id, options);
       if (!existing) return null;
     }
+    // Normalize assigned_to empty to null
+    if (updates.assigned_to === '' || updates.assigned_to === 'self') updates.assigned_to = null;
+
     const allowedFields = ['day_of_week','time_slot','scheduled_date','status','assigned_to','estimated_duration_minutes','notes','is_recurring'];
     const setClauses = [];
     const values = [];
@@ -148,8 +168,6 @@ class RoomCleaningRepository {
       const existing = await this.findById(id, options);
       if (!existing) return null;
     }
-    // Support both (id, completedBy, notes, actualDuration) and (id, completedBy, notes, actualDuration, options) or legacy object
-    // Normalize
     if (typeof options === 'undefined' && typeof actualDuration === 'object' && actualDuration?.propertyIds) {
       options = actualDuration;
       actualDuration = undefined;
@@ -193,8 +211,16 @@ class RoomCleaningRepository {
       err.status = 403;
       throw err;
     }
-    const result = await pool.query('SELECT generate_weekly_cleaning_schedule($1, $2) as count', [propertyId, weekStartDate]);
-    return result.rows[0].count;
+    try {
+      const result = await pool.query('SELECT generate_weekly_cleaning_schedule($1, $2) as count', [propertyId, weekStartDate]);
+      return result.rows[0].count;
+    } catch (e) {
+      if (e.message && e.message.includes('does not exist')) {
+        console.warn('generate_weekly_cleaning_schedule() not found, returning 0');
+        return 0;
+      }
+      throw e;
+    }
   }
 
   async getRoomHistory(roomId, limit = 10, options = {}) {
@@ -226,8 +252,46 @@ class RoomCleaningRepository {
     if (propertyIds && !propertyIds.includes('*') && !propertyIds.includes(propertyId)) {
       return { scheduled: 0, in_progress: 0, completed: 0, skipped: 0, total: 0 };
     }
-    const result = await pool.query(`SELECT COUNT(*) FILTER (WHERE status = 'scheduled') as scheduled, COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress, COUNT(*) FILTER (WHERE status = 'completed') as completed, COUNT(*) FILTER (WHERE status = 'skipped') as skipped, COUNT(*) as total FROM room_cleaning_schedule WHERE property_id = $1 AND week_start_date = $2`, [propertyId, weekStartDate]);
-    return result.rows[0];
+    try {
+      const result = await pool.query(`
+        SELECT 
+          COUNT(*) FILTER (WHERE status = 'scheduled') as scheduled,
+          COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress,
+          COUNT(*) FILTER (WHERE status = 'completed') as completed,
+          COUNT(*) FILTER (WHERE status = 'skipped') as skipped,
+          COUNT(*) as total
+        FROM room_cleaning_schedule 
+        WHERE property_id = $1 AND week_start_date = $2
+      `, [propertyId, weekStartDate]);
+      const row = result.rows[0];
+      return {
+        scheduled: parseInt(row.scheduled) || 0,
+        in_progress: parseInt(row.in_progress) || 0,
+        completed: parseInt(row.completed) || 0,
+        skipped: parseInt(row.skipped) || 0,
+        total: parseInt(row.total) || 0
+      };
+    } catch (e) {
+      console.error('getStats FILTER failed, fallback to CASE WHEN', e.message);
+      const result = await pool.query(`
+        SELECT 
+          SUM(CASE WHEN status='scheduled' THEN 1 ELSE 0 END) as scheduled,
+          SUM(CASE WHEN status='in_progress' THEN 1 ELSE 0 END) as in_progress,
+          SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed,
+          SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) as skipped,
+          COUNT(*) as total
+        FROM room_cleaning_schedule 
+        WHERE property_id = $1 AND week_start_date = $2
+      `, [propertyId, weekStartDate]);
+      const row = result.rows[0];
+      return {
+        scheduled: parseInt(row.scheduled) || 0,
+        in_progress: parseInt(row.in_progress) || 0,
+        completed: parseInt(row.completed) || 0,
+        skipped: parseInt(row.skipped) || 0,
+        total: parseInt(row.total) || 0
+      };
+    }
   }
 }
 

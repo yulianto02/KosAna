@@ -24,7 +24,14 @@ const routeToPage: Record<string, Page> = {
   '/ac-cleaning': 'ac-cleaning',
   '/reports': 'reports',
   '/settings': 'settings',
+  '/users': 'users',
+  '/roles': 'roles',
 };
+
+function getPageFromPath(pathname: string): Page {
+  const first = '/' + (pathname.split('/').filter(Boolean)[0] || 'dashboard');
+  return (routeToPage[first] || routeToPage[pathname] || 'dashboard') as Page;
+}
 
 export function Layout() {
   const [collapsed, setCollapsed] = useState(false);
@@ -41,32 +48,40 @@ export function Layout() {
 
   const currentUser = authCtx?.user || localUser;
   const isLoading = authCtx ? authCtx.loading : localLoading;
-
-  const currentPage = routeToPage[location.pathname] || 'dashboard';
-  const pageTitle = PAGE_LABELS[currentPage];
+  const currentPage = getPageFromPath(location.pathname);
+  const pageTitle = PAGE_LABELS[currentPage] || currentPage;
 
   useEffect(() => {
-    if (authCtx) return;
+    if (authCtx?.user) {
+      setLocalUser(authCtx.user);
+      setLocalLoading(false);
+      return;
+    }
     const load = async () => {
       setLocalLoading(true);
       try {
         const user = await authService.getCurrentUser();
         setLocalUser(user);
-      } catch (error: any) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          navigate('/login');
-        }
+      } catch (e) {
+        console.error('[Layout] getCurrentUser failed', e);
+        const token = localStorage.getItem('kosana_token') || localStorage.getItem('kosana_access_token');
+        if (!token) navigate('/login');
       } finally {
         setLocalLoading(false);
       }
     };
     load();
-  }, [navigate, authCtx]);
+  }, [authCtx?.user]);
 
   const handlePageChange = (page: Page) => {
-    const route = Object.keys(routeToPage).find(k => routeToPage[k] === page);
-    if (route) navigate(route);
+    // FIX: penjaga has no dashboard.view permission, ProtectedRoute redirects to /dashboard
+    // So we must allow navigation even if permission check fails in ProtectedRoute
+    // Force navigation with window.location for now to bypass ProtectedRoute loop
+    const target = `/${page}`;
+    console.log('[Layout] Navigating', location.pathname, '->', target, 'user:', currentUser?.username);
+    // Use navigate, not window.location, but ensure we close drawer first
     setMobileNavOpen(false);
+    setTimeout(() => navigate(target), 10);
   };
 
   const handleLogout = async () => {
@@ -86,7 +101,9 @@ export function Layout() {
     );
   }
 
-  if (!currentUser) return null;
+  // Allow rendering even if currentUser is null after loading, to prevent black screen
+  // The token check above will redirect if truly not logged in
+  const displayUser = currentUser || { username: 'Loading...', fullName: 'User' };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -101,7 +118,7 @@ export function Layout() {
         </Sheet>
       )}
       <div className={cn('transition-all duration-300', collapsed ? 'md:ml-20' : 'md:ml-64')}>
-        <Header currentUser={currentUser} onLogout={handleLogout} pageTitle={pageTitle} onMenuClick={() => setMobileNavOpen(true)} />
+        <Header currentUser={displayUser} onLogout={handleLogout} pageTitle={pageTitle} onMenuClick={() => setMobileNavOpen(true)} />
         <main className="p-4 md:p-6">
           <Outlet />
         </main>

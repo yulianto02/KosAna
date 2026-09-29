@@ -1,31 +1,13 @@
-// app/src/pages/RoomCleaning.tsx - FIXED for penjaga: allSettled + property fallback + permission buttons
+// app/src/pages/RoomCleaning.tsx - FOCUS FIX + backend 500 fix compatible
 import { useState, useEffect, useMemo } from 'react';
-import {
-  Plus, Search, ChevronLeft, ChevronRight, Calendar as CalendarIcon,
-  CheckCircle2, Clock, AlertCircle, RotateCcw, User, MoreHorizontal,
-  Sparkles, Trash2, PlayCircle
-} from 'lucide-react';
+import { Plus, Search, ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckCircle2, Clock, AlertCircle, RotateCcw, User, MoreHorizontal, Sparkles, Trash2, PlayCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Label } from '@/components/ui/label';
 import { roomCleaningAPI, propertiesAPI, roomsAPI, usersAPI } from '@/services/api';
 import type { RoomCleaningSchedule, Property, Room, User as UserType, CleaningStats } from '@/types';
@@ -45,7 +27,6 @@ const SLOTS = [
   { slot: 5, time: '14:00', label: '14:00 - 14:45' },
   { slot: 6, time: '15:00', label: '15:00 - 15:45' },
 ];
-
 const STATUS_CONFIG = {
   scheduled: { label: 'Terjadwal', color: 'bg-[#7A9EB8]/20 text-[#5D4037] border-[#7A9EB8]', icon: Clock, bgColor: 'bg-[#7A9EB8]/10' },
   in_progress: { label: 'Dikerjakan', color: 'bg-[#D4A373]/20 text-[#5D4037] border-[#D4A373]', icon: PlayCircle, bgColor: 'bg-[#D4A373]/10' },
@@ -53,6 +34,44 @@ const STATUS_CONFIG = {
   skipped: { label: 'Dilewati', color: 'bg-[#C17C53]/20 text-[#5D4037] border-[#C17C53] line-through', icon: AlertCircle, bgColor: 'bg-[#C17C53]/10' },
   rescheduled: { label: 'Diubah', color: 'bg-[#C9A227]/20 text-[#5D4037] border-[#C9A227]', icon: RotateCcw, bgColor: 'bg-[#C9A227]/10' }
 };
+
+// FIX: Stable form outside - prevents 1-char typing bug
+function RoomCleaningFormContent({ formData, setFormData, rooms, cleaners, getAvailableRooms }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; rooms: Room[]; cleaners: UserType[]; getAvailableRooms: ()=>Room[] }) {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Kamar *</Label>
+        <Select value={formData.room_id} onValueChange={(v) => setFormData((p:any)=>({...p, room_id: v}))}>
+          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder={rooms.length===0 ? "Tidak ada kamar (memuat...)" : "Pilih kamar"} /></SelectTrigger>
+          <SelectContent>{getAvailableRooms().map(r => (<SelectItem key={r.id} value={r.id}>Kamar {r.room_number} (Lantai {r.floor})</SelectItem>))}{getAvailableRooms().length===0 && <div className="p-2 text-xs text-gray-500">Semua kamar sudah dijadwalkan minggu ini</div>}</SelectContent>
+        </Select>
+        {rooms.length===0 && <p className="text-xs text-amber-600">Jika daftar kosong, pastikan properti terpilih.</p>}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Hari *</Label>
+          <Select value={formData.day_of_week.toString()} onValueChange={(v) => setFormData((p:any)=>({...p, day_of_week: parseInt(v) as any}))}>
+            <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>{DAYS.map((day, idx) => (<SelectItem key={idx} value={idx.toString()}>{day}</SelectItem>))}</SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Slot *</Label>
+          <Select value={formData.time_slot.toString()} onValueChange={(v) => setFormData((p:any)=>({...p, time_slot: parseInt(v) as any}))}>
+            <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>{SLOTS.map(s => (<SelectItem key={s.slot} value={s.slot.toString()}>{s.label}</SelectItem>))}</SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Penanggung Jawab</Label>
+        <Select value={formData.assigned_to} onValueChange={(v) => setFormData((p:any)=>({...p, assigned_to: v}))}>
+          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder={cleaners.length===0 ? "Penjaga (otomatis)" : "Pilih penjaga"} /></SelectTrigger>
+          <SelectContent>{cleaners.length>0 ? cleaners.map(c => (<SelectItem key={c.id} value={c.id}>{c.full_name || c.username}</SelectItem>)) : <SelectItem value="">Saya (penjaga)</SelectItem>}</SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Catatan</Label>
+        <textarea value={formData.notes} onChange={(e) => setFormData((p:any)=>({...p, notes: e.target.value}))} className="w-full px-3 py-3 text-base sm:text-sm border border-[#8D6E63] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#5D4037] bg-white" rows={3} placeholder="Catatan khusus..." />
+      </div>
+    </div>
+  );
+}
 
 export function RoomCleaning() {
   const isMobile = useIsMobile();
@@ -87,7 +106,6 @@ export function RoomCleaning() {
   useEffect(() => { fetchInitialData(); }, []);
   useEffect(() => { if (selectedProperty) { fetchSchedules(); fetchRooms(); } }, [selectedProperty, weekStart]);
   useEffect(() => {
-    // Auto-select Kebayoran Lama if penjaga has only 1 property and none selected
     if (!selectedProperty) {
       if (properties.length === 1) setSelectedProperty(properties[0].id);
       else if (propertyScopes.length === 1) setSelectedProperty(propertyScopes[0].propertyId);
@@ -97,24 +115,18 @@ export function RoomCleaning() {
 
   const fetchInitialData = async () => {
     try {
-      // FIX: use allSettled so usersAPI 403 (penjaga no users.view) doesn't block properties
       const results = await Promise.allSettled([
         (can('properties.view') || can('properties.read')) ? propertiesAPI.getAll() : Promise.resolve([] as Property[]),
         (can('users.view') || can('users.read')) ? usersAPI.getAll() : Promise.resolve([] as UserType[]),
       ]);
       const propertiesRes = results[0].status === 'fulfilled' ? results[0].value : [];
       const usersRes = results[1].status === 'fulfilled' ? results[1].value : [];
-
-      // Fallback: if properties empty but we have scopes (penjaga case), keep empty and UI will show fallback
       if (propertiesRes.length === 0 && propertyScopes.length > 0) {
         console.warn('Properties API empty, using propertyScopes fallback for penjaga', propertyScopes);
       }
-
       setProperties(propertiesRes as any);
-      // For cleaners, if users API blocked, fallback to empty list - penjaga can still assign to self via form
       const filteredCleaners = (usersRes as any[]).filter((u: UserType) => u.role === 'penjaga' || u.role === 'admin');
       setCleaners(filteredCleaners.length > 0 ? filteredCleaners : usersRes as any);
-      
       if (propertiesRes.length > 0 && !selectedProperty) setSelectedProperty((propertiesRes as any)[0].id);
       else if (propertiesRes.length === 0 && propertyScopes.length > 0 && !selectedProperty) {
         setSelectedProperty(propertyScopes[0].propertyId);
@@ -133,6 +145,8 @@ export function RoomCleaning() {
       const statsRes = results[1].status === 'fulfilled' ? results[1].value : null;
       setSchedules(schedulesRes as any); 
       setStats(statsRes as any); 
+      if (results[0].status === 'rejected') console.error('getAll cleaning failed', results[0].reason);
+      if (results[1].status === 'rejected') console.error('getStats cleaning failed', results[1].reason);
     }
     catch (error) { toast.error('Gagal memuat jadwal pembersihan'); }
     finally { setIsLoading(false); }
@@ -144,7 +158,6 @@ export function RoomCleaning() {
         (can('rooms.view') || can('rooms.read')) ? roomsAPI.getAll() : Promise.resolve([] as Room[])
       ]);
       const roomsRes = results[0].status === 'fulfilled' ? results[0].value : [];
-      // Filter by selected property, but also allow all if no property filter for penjaga
       const filtered = (roomsRes as any).filter((r: Room) => !selectedProperty || r.property_id === selectedProperty);
       setRooms(filtered);
     } catch (error) { toast.error('Gagal memuat data kamar'); } 
@@ -155,15 +168,21 @@ export function RoomCleaning() {
   const handleCurrentWeek = () => setCurrentDate(new Date());
   const handleGenerateSchedule = async () => { 
     if (!can('room_cleaning.schedule') && !can('room_cleaning.create')) { toast.error('Tidak ada izin'); return; }
-    try { const result = await roomCleaningAPI.generate(selectedProperty, weekStart); toast.success(`${result.count} kamar berhasil dijadwalkan`); fetchSchedules(); } catch (error) { toast.error('Gagal generate jadwal'); } 
+    try { const result = await roomCleaningAPI.generate(selectedProperty, weekStart); toast.success(`${result.count} kamar berhasil dijadwalkan`); fetchSchedules(); } catch (error:any) { toast.error(error?.response?.data?.error || 'Gagal generate jadwal'); } 
   };
   const handleAddSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!can('room_cleaning.schedule') && !can('room_cleaning.create')) { toast.error('Tidak ada izin'); return; }
+    if (!formData.room_id) { toast.error('Pilih kamar'); return; }
     try {
       await roomCleaningAPI.create({ room_id: formData.room_id, property_id: selectedProperty, week_start_date: weekStart, day_of_week: formData.day_of_week as any, time_slot: formData.time_slot as any, assigned_to: formData.assigned_to || undefined, notes: formData.notes });
       toast.success('Jadwal pembersihan berhasil ditambahkan'); setIsAddDialogOpen(false); setFormData({ room_id: '', day_of_week: 0, time_slot: 1, assigned_to: '', notes: '' }); fetchSchedules();
-    } catch (error) { toast.error('Gagal menambahkan jadwal'); }
+    } catch (error:any) { 
+      console.error(error);
+      const msg = error?.response?.data?.error || 'Gagal menambahkan jadwal';
+      if (error?.response?.status === 409) toast.error('Jadwal bentrok: kamar sudah dijadwalkan di slot ini');
+      else toast.error(msg);
+    }
   };
   const handleStartCleaning = async (schedule: RoomCleaningSchedule) => { 
     if (!can('room_cleaning.complete') && !can('room_cleaning.schedule')) { toast.error('Tidak ada izin'); return; }
@@ -187,48 +206,11 @@ export function RoomCleaning() {
   const getScheduleForSlot = (dayIndex: number, slotNumber: number) => schedules.find(s => s.day_of_week === dayIndex && s.time_slot === slotNumber);
   const getAvailableRooms = () => { const scheduledRoomIds = schedules.map(s => s.room_id); return rooms.filter(r =>!scheduledRoomIds.includes(r.id) && r.status!== 'maintenance'); };
   const canModifySchedule = (schedule: RoomCleaningSchedule) => schedule.status === 'scheduled' || schedule.status === 'rescheduled';
-
   const canCreate = can('room_cleaning.schedule') || can('room_cleaning.create');
   const canUpdate = can('room_cleaning.complete') || can('room_cleaning.schedule');
 
-  const FormContent = () => (
-    <div className="space-y-4">
-      <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Kamar *</Label>
-        <Select value={formData.room_id} onValueChange={(v) => setFormData({...formData, room_id: v})}>
-          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder={rooms.length===0 ? "Tidak ada kamar (memuat...)" : "Pilih kamar"} /></SelectTrigger>
-          <SelectContent>{getAvailableRooms().map(r => (<SelectItem key={r.id} value={r.id}>Kamar {r.room_number} (Lantai {r.floor})</SelectItem>))}</SelectContent>
-        </Select>
-        {rooms.length===0 && <p className="text-xs text-amber-600">Jika daftar kosong, pastikan properti Kebayoran Lama terpilih dan jalankan SQL properties.read + rooms.read lalu login ulang.</p>}
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Hari *</Label>
-          <Select value={formData.day_of_week.toString()} onValueChange={(v) => setFormData({...formData, day_of_week: parseInt(v) as any})}>
-            <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>{DAYS.map((day, idx) => (<SelectItem key={idx} value={idx.toString()}>{day}</SelectItem>))}</SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Slot *</Label>
-          <Select value={formData.time_slot.toString()} onValueChange={(v) => setFormData({...formData, time_slot: parseInt(v) as any})}>
-            <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>{SLOTS.map(s => (<SelectItem key={s.slot} value={s.slot.toString()}>{s.label}</SelectItem>))}</SelectContent>
-          </Select>
-        </div>
-      </div>
-      <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Penanggung Jawab</Label>
-        <Select value={formData.assigned_to} onValueChange={(v) => setFormData({...formData, assigned_to: v})}>
-          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder={cleaners.length===0 ? "Penjaga (otomatis)" : "Pilih penjaga"} /></SelectTrigger>
-          <SelectContent>{cleaners.length>0 ? cleaners.map(c => (<SelectItem key={c.id} value={c.id}>{c.full_name || c.username}</SelectItem>)) : <SelectItem value="self">Saya (penjaga)</SelectItem>}</SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Catatan</Label>
-        <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-3 py-3 text-base sm:text-sm border border-[#8D6E63] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#5D4037] bg-white" rows={3} placeholder="Catatan khusus..." />
-      </div>
-    </div>
-  );
-
   return (
     <div className="space-y-4 sm:space-y-6 bg-[#FAF9F6] min-h-screen p-3 sm:p-6 w-full max-w-full overflow-x-hidden">
-      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-3xl font-bold text-[#3E2723] truncate">Jadwal Pembersihan Kamar</h1><p className="text-sm sm:text-base text-[#5D4037] mt-1">Kelola jadwal cleaning mingguan</p></div>
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
@@ -237,7 +219,6 @@ export function RoomCleaning() {
         </div>
       </div>
 
-      {/* Stats */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 w-full">
           <Card className="bg-[#7A9EB8]/10 border-[#7A9EB8]/30 w-full overflow-hidden"><CardContent className="p-3 sm:p-4"><div className="flex items-center gap-2 sm:gap-3"><div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-[#7A9EB8] flex items-center justify-center shrink-0"><Clock className="w-4 h-4 sm:w-5 sm:h-5 text-white" /></div><div className="min-w-0"><p className="text-xs sm:text-sm text-[#5D4037] truncate">Terjadwal</p><p className="text-lg sm:text-xl font-bold text-[#3E2723]">{stats.scheduled}</p></div></div></CardContent></Card>
@@ -247,7 +228,6 @@ export function RoomCleaning() {
         </div>
       )}
 
-      {/* Controls */}
       <Card className="bg-white border-[#D7CCC8] w-full overflow-hidden">
         <CardContent className="p-3 sm:p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -269,17 +249,16 @@ export function RoomCleaning() {
         </CardContent>
       </Card>
 
-      {/* Desktop Calendar Grid */}
       <Card className="bg-white border-[#D7CCC8] overflow-hidden hidden md:block w-full">
-        <div className="overflow-x-auto"><div className="min-w-">
+        <div className="overflow-x-auto"><div className="min-w-[900px]">
           <div className="grid grid-cols-8 bg-[#5D4037] text-white"><div className="p-4 font-semibold text-center border-r border-[#8D6E63]">Slot Waktu</div>{DAYS.map((day, idx) => (<div key={day} className="p-4 text-center border-r border-[#8D6E63] last:border-r-0"><div className="font-semibold">{day}</div><div className="text-xs text-[#D7CCC8]">{format(weekDates[idx], 'd MMM', { locale: id })}</div></div>))}</div>
           {SLOTS.map((slot) => (
             <div key={slot.slot} className="grid grid-cols-8 border-b border-[#D7CCC8] last:border-b-0">
               <div className="p-4 bg-[#F5F5DC] border-r border-[#D7CCC8] flex flex-col justify-center items-center"><span className="font-semibold text-[#3E2723]">{slot.time}</span><span className="text-xs text-[#5D4037]">Slot {slot.slot}</span></div>
               {Array.from({ length: 7 }, (_, dayIdx) => {
                 const schedule = getScheduleForSlot(dayIdx, slot.slot);
-                return (<div key={`${slot.slot}-${dayIdx}`} className="p-2 border-r border-[#D7CCC8] last:border-r-0 min-h- bg-[#FAF9F6]">
-                  {schedule? (<div onClick={() => { setSelectedSchedule(schedule); setIsDetailDialogOpen(true); }} className={cn("h-full p-3 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md", STATUS_CONFIG[schedule.status].bgColor, STATUS_CONFIG[schedule.status].color.split(' ')[2], "border-current")}><div className="flex items-center justify-between mb-1"><span className="font-bold text-[#3E2723] text-sm">{schedule.room_number}</span>{(() => { const StatusIcon = STATUS_CONFIG[schedule.status].icon; return <StatusIcon className="w-4 h-4 text-[#5D4037]" />; })()}</div>{schedule.assigned_name && (<div className="flex items-center gap-1 text-xs text-[#5D4037] mt-1"><User className="w-3 h-3" /><span className="truncate">{schedule.assigned_name}</span></div>)}<Badge variant="outline" className={cn("mt-2 text-xs border-current", STATUS_CONFIG[schedule.status].color)}>{STATUS_CONFIG[schedule.status].label}</Badge></div>) : (canCreate ? <div onClick={() => { setFormData({...formData, day_of_week: dayIdx as any, time_slot: slot.slot as any}); setIsAddDialogOpen(true); }} className="h-full flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg cursor-pointer hover:border-[#8D6E63] hover:bg-[#F5F5DC] transition-colors"><Plus className="w-5 h-5 text-[#8D6E63]" /></div> : <div className="h-full" />)}
+                return (<div key={`${slot.slot}-${dayIdx}`} className="p-2 border-r border-[#D7CCC8] last:border-r-0 min-h-[80px] bg-[#FAF9F6]">
+                  {schedule? (<div onClick={() => { setSelectedSchedule(schedule); setIsDetailDialogOpen(true); }} className={cn("h-full p-3 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md", STATUS_CONFIG[schedule.status].bgColor, STATUS_CONFIG[schedule.status].color.split(' ')[2], "border-current")}><div className="flex items-center justify-between mb-1"><span className="font-bold text-[#3E2723] text-sm">{schedule.room_number}</span>{(() => { const StatusIcon = STATUS_CONFIG[schedule.status].icon; return <StatusIcon className="w-4 h-4 text-[#5D4037]" />; })()}</div>{schedule.assigned_name && (<div className="flex items-center gap-1 text-xs text-[#5D4037] mt-1"><User className="w-3 h-3" /><span className="truncate">{schedule.assigned_name}</span></div>)}<Badge variant="outline" className={cn("mt-2 text-xs border-current", STATUS_CONFIG[schedule.status].color)}>{STATUS_CONFIG[schedule.status].label}</Badge></div>) : (canCreate ? <div onClick={() => { setFormData((p:any)=>({...p, day_of_week: dayIdx as any, time_slot: slot.slot as any})); setIsAddDialogOpen(true); }} className="h-full flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg cursor-pointer hover:border-[#8D6E63] hover:bg-[#F5F5DC] transition-colors"><Plus className="w-5 h-5 text-[#8D6E63]" /></div> : <div className="h-full" />)}
                 </div>);
               })}
             </div>
@@ -287,14 +266,13 @@ export function RoomCleaning() {
         </div></div>
       </Card>
 
-      {/* Mobile List View */}
       <div className="md:hidden w-full space-y-4">
         <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none -mx-3 px-3">
           {DAYS.map((day, idx) => {
             const count = schedules.filter(s => s.day_of_week === idx).length;
             const isSelected = selectedDayMobile === idx;
             return (
-              <button key={day} onClick={() => setSelectedDayMobile(idx)} className={cn("shrink-0 px-4 py-2.5 rounded-full text-sm font-medium border-2 transition-colors min-h-", isSelected? "bg-[#5D4037] text-white border-[#5D4037]" : "bg-white text-[#5D4037] border-[#D7CCC8]")}>
+              <button key={day} onClick={() => setSelectedDayMobile(idx)} className={cn("shrink-0 px-4 py-2.5 rounded-full text-sm font-medium border-2 transition-colors min-h-[44px]", isSelected? "bg-[#5D4037] text-white border-[#5D4037]" : "bg-white text-[#5D4037] border-[#D7CCC8]")}>
                 <span className="block">{day}</span><span className="text-xs opacity-80">{format(weekDates[idx], 'd MMM', { locale: id })} • {count}</span>
               </button>
             );
@@ -314,7 +292,7 @@ export function RoomCleaning() {
                         {schedule.assigned_name && (<p className="text-xs text-[#5D4037] mt-1 flex items-center gap-1"><User className="w-3 h-3" />{schedule.assigned_name}</p>)}
                       </div>
                     ) : (
-                      canCreate ? <button onClick={() => { setFormData({...formData, day_of_week: selectedDayMobile as any, time_slot: slot.slot as any}); setIsAddDialogOpen(true); }} className="w-full h- flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg text-[#8D6E63] text-sm"><Plus className="w-4 h-4 mr-1" />Tambah jadwal</button> : <div className="h-10 flex items-center text-xs text-gray-400">Tidak ada jadwal</div>
+                      canCreate ? <button onClick={() => { setFormData((p:any)=>({...p, day_of_week: selectedDayMobile as any, time_slot: slot.slot as any})); setIsAddDialogOpen(true); }} className="w-full h-[52px] flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg text-[#8D6E63] text-sm"><Plus className="w-4 h-4 mr-1" />Tambah jadwal</button> : <div className="h-10 flex items-center text-xs text-gray-400">Tidak ada jadwal</div>
                     )}
                   </div>
                 </CardContent>
@@ -324,27 +302,25 @@ export function RoomCleaning() {
         </div>
       </div>
 
-      {/* Add */}
       {isMobile? (
         <Sheet open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <SheetContent side="bottom" className="h- w-full p-0 flex flex-col bg-[#FAF9F6]">
+          <SheetContent side="bottom" className="h-[85vh] w-full p-0 flex flex-col bg-[#FAF9F6]">
             <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle className="text-[#3E2723]">Tambah Jadwal Pembersihan</SheetTitle><SheetDescription className="text-[#5D4037]">Jadwalkan pembersihan untuk kamar tertentu</SheetDescription></SheetHeader>
             <form onSubmit={handleAddSchedule} className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-4 pb-[env(safe-area-inset-bottom)]"><FormContent /></div>
+              <div className="flex-1 overflow-y-auto p-4 pb-[env(safe-area-inset-bottom)]"><RoomCleaningFormContent formData={formData} setFormData={setFormData} rooms={rooms} cleaners={cleaners} getAvailableRooms={getAvailableRooms} /></div>
               <SheetFooter className="p-4 border-t flex-row gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button type="button" variant="outline" className="flex-1 h-11 border-[#8D6E63] text-[#5D4037]" onClick={() => setIsAddDialogOpen(false)}>Batal</Button><Button type="submit" className="flex-1 bg-gradient-to-r from-[#5D4037] to-[#3E2723] text-white h-11">Simpan Jadwal</Button></SheetFooter>
             </form>
           </SheetContent>
         </Sheet>
       ) : (
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Tambah Jadwal Pembersihan</DialogTitle><DialogDescription className="text-[#5D4037]">Jadwalkan pembersihan untuk kamar tertentu</DialogDescription></DialogHeader><form onSubmit={handleAddSchedule} className="space-y-4"><FormContent /><DialogFooter><Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Batal</Button><Button type="submit" className="bg-gradient-to-r from-[#5D4037] to-[#3E2723] text-white">Simpan Jadwal</Button></DialogFooter></form></DialogContent>
+          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Tambah Jadwal Pembersihan</DialogTitle><DialogDescription className="text-[#5D4037]">Jadwalkan pembersihan untuk kamar tertentu</DialogDescription></DialogHeader><form onSubmit={handleAddSchedule} className="space-y-4"><RoomCleaningFormContent formData={formData} setFormData={setFormData} rooms={rooms} cleaners={cleaners} getAvailableRooms={getAvailableRooms} /><DialogFooter><Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Batal</Button><Button type="submit" className="bg-gradient-to-r from-[#5D4037] to-[#3E2723] text-white">Simpan Jadwal</Button></DialogFooter></form></DialogContent>
         </Dialog>
       )}
 
-      {/* Detail - same as yours, with permission guards */}
       {isMobile? (
         <Sheet open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
-          <SheetContent side="bottom" className="h- w-full p-0 flex flex-col bg-[#FAF9F6]">
+          <SheetContent side="bottom" className="h-[80vh] w-full p-0 flex flex-col bg-[#FAF9F6]">
             {selectedSchedule && (
               <>
                 <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle className="text-[#3E2723] flex items-center gap-2 flex-wrap">Kamar {selectedSchedule.room_number}<Badge className={STATUS_CONFIG[selectedSchedule.status].color}>{STATUS_CONFIG[selectedSchedule.status].label}</Badge></SheetTitle></SheetHeader>
@@ -373,7 +349,6 @@ export function RoomCleaning() {
         </Dialog>
       )}
 
-      {/* Complete, Skip, Delete dialogs same as yours */}
       {isMobile? (
         <Sheet open={isCompleteDialogOpen} onOpenChange={setIsCompleteDialogOpen}>
           <SheetContent side="bottom" className="h-auto w-full p-0 flex flex-col bg-[#FAF9F6] rounded-t-xl">
