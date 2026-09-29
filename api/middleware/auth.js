@@ -5,9 +5,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-producti
 const ACCESS_EXPIRES = '2h';
 const REFRESH_EXPIRES = '30d';
 
-// [STRIPPED 73 bytes]  Helpers
 async function getPropertyScopesForUser(userId) {
-  // Returns [{ propertyId, role, permissions: [] }]
   const result = await pool.query(`
     SELECT 
       pm.property_id as "propertyId",
@@ -22,9 +20,6 @@ async function getPropertyScopesForUser(userId) {
     GROUP BY pm.property_id, r.code, pm.is_owner, pm.assigned_at
     ORDER BY pm.assigned_at
   `, [userId]);
-
-  // For admin with no property_members yet (or '*' handling), still return scopes
-  // But after migration admin should have members. Keep fallback.
   return result.rows.map(r => ({
     propertyId: r.propertyId,
     role: r.role,
@@ -44,14 +39,13 @@ async function getUserFullRecord(userId) {
   return res.rows[0] || null;
 }
 
-// [STRIPPED 75 bytes]  Token generators
 function generateAccessToken(userRecord, propertyScopes) {
   const payload = {
     userId: userRecord.id,
     username: userRecord.username,
     globalRole: userRecord.global_role || userRecord.old_role,
     tokenVersion: userRecord.token_version,
-    propertyScopes: propertyScopes // [{ propertyId, role, permissions }]
+    propertyScopes: propertyScopes
   };
   return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_EXPIRES });
 }
@@ -64,9 +58,7 @@ function generateRefreshToken(userRecord) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: REFRESH_EXPIRES });
 }
 
-// Legacy wrapper for compatibility
 function generateToken(user) {
-  // Will be used only by old code paths; delegate to access token with empty scopes
   return jwt.sign(
     { id: user.id, username: user.username, role: user.role, userId: user.id, tokenVersion: 1, propertyScopes: [] },
     JWT_SECRET,
@@ -74,16 +66,13 @@ function generateToken(user) {
   );
 }
 
-// [STRIPPED 75 bytes]  Revocation helper
 async function revokeUserSessions(userId) {
   await pool.query(`UPDATE users SET token_version = token_version + 1, updated_at = NOW() WHERE id = $1`, [userId]);
-  // audit log optional
   try {
     await pool.query(`INSERT INTO audit_logs (user_id, action, table_name, record_id) VALUES ($1, 'revoke_sessions', 'users', $2)`, [userId, userId]);
   } catch (e) {}
 }
 
-// [STRIPPED 75 bytes]  Middleware: authenticate
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -98,18 +87,15 @@ async function authenticateToken(req, res, next) {
     if (!userRecord) return res.status(401).json({ error: 'User not found' });
     if (!userRecord.is_active) return res.status(401).json({ error: 'User account is deactivated' });
 
-    // token_version check - instant revocation
     if (typeof decoded.tokenVersion !== 'undefined' && decoded.tokenVersion !== userRecord.token_version) {
       return res.status(401).json({ error: 'Token revoked, please login again', code: 'TOKEN_REVOKED' });
     }
 
-    // propertyScopes from token if present, else load fresh (fallback for old tokens)
     let propertyScopes = decoded.propertyScopes;
     if (!propertyScopes) {
       propertyScopes = await getPropertyScopesForUser(userId);
     }
 
-    // Build flat permissions union
     const flatPermissions = [...new Set(propertyScopes.flatMap(s => s.permissions || []))];
     const isAdmin = (userRecord.global_role === 'admin' || userRecord.old_role === 'admin');
 
@@ -119,7 +105,7 @@ async function authenticateToken(req, res, next) {
       username: userRecord.username,
       email: userRecord.email,
       fullName: userRecord.full_name,
-      role: userRecord.global_role || userRecord.old_role, // global
+      role: userRecord.global_role || userRecord.old_role,
       globalRole: userRecord.global_role || userRecord.old_role,
       oldRole: userRecord.old_role,
       tokenVersion: userRecord.token_version,
@@ -128,7 +114,8 @@ async function authenticateToken(req, res, next) {
       isAdmin,
       is_owner: propertyScopes.some(s => s.isOwner)
     };
-    // also attach decoded for debugging
+    req.userPermissions = isAdmin ? ['*'] : flatPermissions;
+    req.userRole = userRecord.global_role || userRecord.old_role;
     req.tokenPayload = decoded;
     next();
   } catch (error) {
@@ -139,11 +126,10 @@ async function authenticateToken(req, res, next) {
   }
 }
 
-// [STRIPPED 75 bytes]  Helpers for RBAC in routes
 function getUserPermissions(req) {
   if (!req.user) return [];
   if (req.user.isAdmin) return ['*'];
-  return req.user.permissions || [];
+  return req.userPermissions || req.user.permissions || [];
 }
 
 function getAccessiblePropertyIds(req) {
@@ -155,16 +141,28 @@ function getAccessiblePropertyIds(req) {
 function hasPermission(req, permissionCode) {
   if (!req.user) return false;
   if (req.user.isAdmin) return true;
-  const perms = req.user.permissions || [];
-  return perms.includes(permissionCode) || perms.includes('*');
+  if (req.user.globalRole === 'admin') return true;
+  const perms = req.userPermissions || req.user.permissions || [];
+  if (perms.includes('*')) return true;
+  // support .view <-> .read alias
+  if (perms.includes(permissionCode)) return true;
+  const alt = permissionCode.includes('.view') ? permissionCode.replace('.view','.read') : permissionCode.replace('.read','.view');
+  return perms.includes(alt);
 }
 
-function requirePermission(permissionCode) {
+function requirePermission(code) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
-    if (req.user.isAdmin) return next();
-    if (hasPermission(req, permissionCode)) return next();
-    return res.status(403).json({ error: `Insufficient permission: ${permissionCode}` });
+    if (req.user.globalRole === 'admin' || req.user.role === 'admin' || req.user.isAdmin) {
+      return next();
+    }
+    const perms = req.userPermissions || req.user.permissions || [];
+    if (perms.includes('*')) return next();
+    if (perms.includes(code)) return next();
+    // alias .view <-> .read for backward compatibility with your seeded .read permissions
+    const alt = code.includes('.view') ? code.replace('.view','.read') : code.replace('.read','.view');
+    if (perms.includes(alt)) return next();
+    return res.status(403).json({ error: `Insufficient permission: ${code}` });
   };
 }
 
@@ -174,7 +172,6 @@ function requireRole(roles) {
     const globalRole = req.user.globalRole || req.user.role;
     const roleList = Array.isArray(roles) ? roles : [roles];
     if (roleList.includes(globalRole)) return next();
-    // also allow if any propertyScope role matches
     const scopedRoles = (req.user.propertyScopes || []).map(s => s.role);
     if (scopedRoles.some(r => roleList.includes(r))) return next();
     return res.status(403).json({ error: 'Insufficient role' });
@@ -182,7 +179,7 @@ function requireRole(roles) {
 }
 
 module.exports = {
-  generateToken, // legacy
+  generateToken,
   generateAccessToken,
   generateRefreshToken,
   authenticateToken,

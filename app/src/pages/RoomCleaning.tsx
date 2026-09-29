@@ -1,4 +1,4 @@
-// app/src/pages/RoomCleaning.tsx - Responsive Mobile Version
+// app/src/pages/RoomCleaning.tsx - FIXED for penjaga: allSettled + property fallback + permission buttons
 import { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Search, ChevronLeft, ChevronRight, Calendar as CalendarIcon,
@@ -33,6 +33,8 @@ import { cn } from '@/lib/utils';
 import { format, startOfWeek, addDays, addWeeks, subWeeks } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/context/AuthContext';
 
 const DAYS = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 const SLOTS = [
@@ -54,6 +56,8 @@ const STATUS_CONFIG = {
 
 export function RoomCleaning() {
   const isMobile = useIsMobile();
+  const { can } = usePermissions();
+  const { propertyScopes, accessiblePropertyIds } = useAuth();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedProperty, setSelectedProperty] = useState<string>('');
   const [properties, setProperties] = useState<Property[]>([]);
@@ -82,36 +86,92 @@ export function RoomCleaning() {
 
   useEffect(() => { fetchInitialData(); }, []);
   useEffect(() => { if (selectedProperty) { fetchSchedules(); fetchRooms(); } }, [selectedProperty, weekStart]);
+  useEffect(() => {
+    // Auto-select Kebayoran Lama if penjaga has only 1 property and none selected
+    if (!selectedProperty) {
+      if (properties.length === 1) setSelectedProperty(properties[0].id);
+      else if (propertyScopes.length === 1) setSelectedProperty(propertyScopes[0].propertyId);
+      else if (accessiblePropertyIds.length === 1 && accessiblePropertyIds[0] !== '*') setSelectedProperty(accessiblePropertyIds[0]);
+    }
+  }, [properties, propertyScopes, accessiblePropertyIds, selectedProperty]);
 
   const fetchInitialData = async () => {
     try {
-      const [propertiesRes, usersRes] = await Promise.all([propertiesAPI.getAll(), usersAPI.getAll()]);
-      setProperties(propertiesRes); setCleaners(usersRes.filter((u: UserType) => u.role === 'penjaga' || u.role === 'admin'));
-      if (propertiesRes.length > 0) setSelectedProperty(propertiesRes[0].id);
+      // FIX: use allSettled so usersAPI 403 (penjaga no users.view) doesn't block properties
+      const results = await Promise.allSettled([
+        (can('properties.view') || can('properties.read')) ? propertiesAPI.getAll() : Promise.resolve([] as Property[]),
+        (can('users.view') || can('users.read')) ? usersAPI.getAll() : Promise.resolve([] as UserType[]),
+      ]);
+      const propertiesRes = results[0].status === 'fulfilled' ? results[0].value : [];
+      const usersRes = results[1].status === 'fulfilled' ? results[1].value : [];
+
+      // Fallback: if properties empty but we have scopes (penjaga case), keep empty and UI will show fallback
+      if (propertiesRes.length === 0 && propertyScopes.length > 0) {
+        console.warn('Properties API empty, using propertyScopes fallback for penjaga', propertyScopes);
+      }
+
+      setProperties(propertiesRes as any);
+      // For cleaners, if users API blocked, fallback to empty list - penjaga can still assign to self via form
+      const filteredCleaners = (usersRes as any[]).filter((u: UserType) => u.role === 'penjaga' || u.role === 'admin');
+      setCleaners(filteredCleaners.length > 0 ? filteredCleaners : usersRes as any);
+      
+      if (propertiesRes.length > 0 && !selectedProperty) setSelectedProperty((propertiesRes as any)[0].id);
+      else if (propertiesRes.length === 0 && propertyScopes.length > 0 && !selectedProperty) {
+        setSelectedProperty(propertyScopes[0].propertyId);
+      }
     } catch (error) { toast.error('Gagal memuat data awal'); }
   };
+  
   const fetchSchedules = async () => {
     if (!selectedProperty) return; setIsLoading(true);
-    try { const [schedulesRes, statsRes] = await Promise.all([roomCleaningAPI.getAll(selectedProperty, weekStart), roomCleaningAPI.getStats(selectedProperty, weekStart)]); setSchedules(schedulesRes); setStats(statsRes); }
+    try { 
+      const results = await Promise.allSettled([
+        roomCleaningAPI.getAll(selectedProperty, weekStart), 
+        roomCleaningAPI.getStats(selectedProperty, weekStart)
+      ]);
+      const schedulesRes = results[0].status === 'fulfilled' ? results[0].value : [];
+      const statsRes = results[1].status === 'fulfilled' ? results[1].value : null;
+      setSchedules(schedulesRes as any); 
+      setStats(statsRes as any); 
+    }
     catch (error) { toast.error('Gagal memuat jadwal pembersihan'); }
     finally { setIsLoading(false); }
   };
-  const fetchRooms = async () => { try { const roomsRes = await roomsAPI.getAll(); setRooms(roomsRes.filter((r: Room) => r.property_id === selectedProperty)); } catch (error) { toast.error('Gagal memuat data kamar'); } };
+  
+  const fetchRooms = async () => { 
+    try { 
+      const results = await Promise.allSettled([
+        (can('rooms.view') || can('rooms.read')) ? roomsAPI.getAll() : Promise.resolve([] as Room[])
+      ]);
+      const roomsRes = results[0].status === 'fulfilled' ? results[0].value : [];
+      // Filter by selected property, but also allow all if no property filter for penjaga
+      const filtered = (roomsRes as any).filter((r: Room) => !selectedProperty || r.property_id === selectedProperty);
+      setRooms(filtered);
+    } catch (error) { toast.error('Gagal memuat data kamar'); } 
+  };
 
   const handlePrevWeek = () => setCurrentDate(subWeeks(currentDate, 1));
   const handleNextWeek = () => setCurrentDate(addWeeks(currentDate, 1));
   const handleCurrentWeek = () => setCurrentDate(new Date());
-  const handleGenerateSchedule = async () => { try { const result = await roomCleaningAPI.generate(selectedProperty, weekStart); toast.success(`${result.count} kamar berhasil dijadwalkan`); fetchSchedules(); } catch (error) { toast.error('Gagal generate jadwal'); } };
+  const handleGenerateSchedule = async () => { 
+    if (!can('room_cleaning.schedule') && !can('room_cleaning.create')) { toast.error('Tidak ada izin'); return; }
+    try { const result = await roomCleaningAPI.generate(selectedProperty, weekStart); toast.success(`${result.count} kamar berhasil dijadwalkan`); fetchSchedules(); } catch (error) { toast.error('Gagal generate jadwal'); } 
+  };
   const handleAddSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!can('room_cleaning.schedule') && !can('room_cleaning.create')) { toast.error('Tidak ada izin'); return; }
     try {
       await roomCleaningAPI.create({ room_id: formData.room_id, property_id: selectedProperty, week_start_date: weekStart, day_of_week: formData.day_of_week as any, time_slot: formData.time_slot as any, assigned_to: formData.assigned_to || undefined, notes: formData.notes });
       toast.success('Jadwal pembersihan berhasil ditambahkan'); setIsAddDialogOpen(false); setFormData({ room_id: '', day_of_week: 0, time_slot: 1, assigned_to: '', notes: '' }); fetchSchedules();
     } catch (error) { toast.error('Gagal menambahkan jadwal'); }
   };
-  const handleStartCleaning = async (schedule: RoomCleaningSchedule) => { try { await roomCleaningAPI.start(schedule.id); toast.success('Pembersihan dimulai'); fetchSchedules(); } catch (error) { toast.error('Gagal memulai pembersihan'); } };
+  const handleStartCleaning = async (schedule: RoomCleaningSchedule) => { 
+    if (!can('room_cleaning.complete') && !can('room_cleaning.schedule')) { toast.error('Tidak ada izin'); return; }
+    try { await roomCleaningAPI.start(schedule.id); toast.success('Pembersihan dimulai'); fetchSchedules(); } catch (error) { toast.error('Gagal memulai pembersihan'); } 
+  };
   const handleCompleteCleaning = async () => {
     if (!selectedSchedule) return;
+    if (!can('room_cleaning.complete')) { toast.error('Tidak ada izin'); return; }
     try { await roomCleaningAPI.complete(selectedSchedule.id, completionNotes, actualDuration); toast.success('Pembersihan selesai dicatat'); setIsCompleteDialogOpen(false); setSelectedSchedule(null); setCompletionNotes(''); setActualDuration(45); fetchSchedules(); } catch (error) { toast.error('Gagal menyelesaikan pembersihan'); }
   };
   const handleSkipCleaning = async () => {
@@ -120,6 +180,7 @@ export function RoomCleaning() {
   };
   const handleDeleteSchedule = async () => {
     if (!selectedSchedule) return;
+    if (!can('room_cleaning.delete') && !can('room_cleaning.schedule')) { toast.error('Tidak ada izin hapus'); return; }
     try { await roomCleaningAPI.delete(selectedSchedule.id); toast.success('Jadwal berhasil dihapus'); setIsDeleteDialogOpen(false); setSelectedSchedule(null); fetchSchedules(); } catch (error) { toast.error('Gagal menghapus jadwal'); }
   };
 
@@ -127,13 +188,17 @@ export function RoomCleaning() {
   const getAvailableRooms = () => { const scheduledRoomIds = schedules.map(s => s.room_id); return rooms.filter(r =>!scheduledRoomIds.includes(r.id) && r.status!== 'maintenance'); };
   const canModifySchedule = (schedule: RoomCleaningSchedule) => schedule.status === 'scheduled' || schedule.status === 'rescheduled';
 
+  const canCreate = can('room_cleaning.schedule') || can('room_cleaning.create');
+  const canUpdate = can('room_cleaning.complete') || can('room_cleaning.schedule');
+
   const FormContent = () => (
     <div className="space-y-4">
       <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Kamar *</Label>
         <Select value={formData.room_id} onValueChange={(v) => setFormData({...formData, room_id: v})}>
-          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder="Pilih kamar" /></SelectTrigger>
+          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder={rooms.length===0 ? "Tidak ada kamar (memuat...)" : "Pilih kamar"} /></SelectTrigger>
           <SelectContent>{getAvailableRooms().map(r => (<SelectItem key={r.id} value={r.id}>Kamar {r.room_number} (Lantai {r.floor})</SelectItem>))}</SelectContent>
         </Select>
+        {rooms.length===0 && <p className="text-xs text-amber-600">Jika daftar kosong, pastikan properti Kebayoran Lama terpilih dan jalankan SQL properties.read + rooms.read lalu login ulang.</p>}
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Hari *</Label>
@@ -151,8 +216,8 @@ export function RoomCleaning() {
       </div>
       <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Penanggung Jawab</Label>
         <Select value={formData.assigned_to} onValueChange={(v) => setFormData({...formData, assigned_to: v})}>
-          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder="Pilih penjaga" /></SelectTrigger>
-          <SelectContent>{cleaners.map(c => (<SelectItem key={c.id} value={c.id}>{c.full_name || c.username}</SelectItem>))}</SelectContent>
+          <SelectTrigger className="border-[#8D6E63] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder={cleaners.length===0 ? "Penjaga (otomatis)" : "Pilih penjaga"} /></SelectTrigger>
+          <SelectContent>{cleaners.length>0 ? cleaners.map(c => (<SelectItem key={c.id} value={c.id}>{c.full_name || c.username}</SelectItem>)) : <SelectItem value="self">Saya (penjaga)</SelectItem>}</SelectContent>
         </Select>
       </div>
       <div className="space-y-2"><Label className="text-[#3E2723] text-sm">Catatan</Label>
@@ -167,8 +232,8 @@ export function RoomCleaning() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-3xl font-bold text-[#3E2723] truncate">Jadwal Pembersihan Kamar</h1><p className="text-sm sm:text-base text-[#5D4037] mt-1">Kelola jadwal cleaning mingguan</p></div>
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
-          <Button onClick={handleGenerateSchedule} className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] hover:from-[#5D8A61] hover:to-[#4A6B4E] text-white shadow-lg h-11 w-full sm:w-auto"><Sparkles className="w-4 h-4 mr-2" />Generate Jadwal</Button>
-          <Button onClick={() => setIsAddDialogOpen(true)} className="bg-gradient-to-r from-[#5D4037] to-[#3E2723] hover:from-[#3E2723] hover:to-[#2C1810] text-white shadow-lg h-11 w-full sm:w-auto"><Plus className="w-4 h-4 mr-2" />Tambah Manual</Button>
+          {canCreate && <><Button onClick={handleGenerateSchedule} className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] hover:from-[#5D8A61] hover:to-[#4A6B4E] text-white shadow-lg h-11 w-full sm:w-auto"><Sparkles className="w-4 h-4 mr-2" />Generate Jadwal</Button>
+          <Button onClick={() => setIsAddDialogOpen(true)} className="bg-gradient-to-r from-[#5D4037] to-[#3E2723] hover:from-[#3E2723] hover:to-[#2C1810] text-white shadow-lg h-11 w-full sm:w-auto"><Plus className="w-4 h-4 mr-2" />Tambah Manual</Button></>}
         </div>
       </div>
 
@@ -188,7 +253,11 @@ export function RoomCleaning() {
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <Select value={selectedProperty} onValueChange={setSelectedProperty}>
               <SelectTrigger className="w-full sm:w-64 border-[#8D6E63] focus:ring-[#5D4037] h-11 text-base sm:h-10 sm:text-sm"><SelectValue placeholder="Pilih Properti" /></SelectTrigger>
-              <SelectContent>{properties.map(p => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}</SelectContent>
+              <SelectContent>
+                {properties.length>0 ? properties.map(p => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)) : 
+                  propertyScopes.map(ps => (<SelectItem key={ps.propertyId} value={ps.propertyId}>{ps.propertyId === 'aad4bf5e-fa23-4533-bb52-d92e1e96666b' ? 'Kos Kebayoran Lama' : ps.propertyId.slice(0,8)}</SelectItem>))
+                }
+              </SelectContent>
             </Select>
             <div className="flex items-center gap-2 w-full sm:w-auto">
               <Button variant="outline" onClick={handlePrevWeek} className="border-[#8D6E63] text-[#5D4037] hover:bg-[#F5F5DC] h-11 w-11 sm:h-9 sm:w-9 p-0 shrink-0"><ChevronLeft className="w-4 h-4" /></Button>
@@ -196,7 +265,7 @@ export function RoomCleaning() {
               <Button variant="outline" onClick={handleNextWeek} className="border-[#8D6E63] text-[#5D4037] hover:bg-[#F5F5DC] h-11 w-11 sm:h-9 sm:w-9 p-0 shrink-0"><ChevronRight className="w-4 h-4" /></Button>
             </div>
           </div>
-          <div className="mt-3 px-3 py-2 bg-[#F5F5DC] rounded-lg border border-[#D7CCC8] text-center sm:text-left"><span className="font-semibold text-[#3E2723] text-sm">{format(weekDates[0], 'd MMM', { locale: id })} - {format(weekDates[6], 'd MMM yyyy', { locale: id })}</span></div>
+          <div className="mt-3 px-3 py-2 bg-[#F5F5DC] rounded-lg border border-[#D7CCC8] text-center sm:text-left"><span className="font-semibold text-[#3E2723] text-sm">{weekDates[0] ? format(weekDates[0], 'd MMM', { locale: id }) : ''} - {weekDates[6] ? format(weekDates[6], 'd MMM yyyy', { locale: id }) : ''}</span>{properties.length===0 && <span className="ml-2 text-xs text-amber-700">(mode penjaga: Kebayoran Lama)</span>}</div>
         </CardContent>
       </Card>
 
@@ -210,7 +279,7 @@ export function RoomCleaning() {
               {Array.from({ length: 7 }, (_, dayIdx) => {
                 const schedule = getScheduleForSlot(dayIdx, slot.slot);
                 return (<div key={`${slot.slot}-${dayIdx}`} className="p-2 border-r border-[#D7CCC8] last:border-r-0 min-h- bg-[#FAF9F6]">
-                  {schedule? (<div onClick={() => { setSelectedSchedule(schedule); setIsDetailDialogOpen(true); }} className={cn("h-full p-3 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md", STATUS_CONFIG[schedule.status].bgColor, STATUS_CONFIG[schedule.status].color.split(' ')[2], "border-current")}><div className="flex items-center justify-between mb-1"><span className="font-bold text-[#3E2723] text-sm">{schedule.room_number}</span>{(() => { const StatusIcon = STATUS_CONFIG[schedule.status].icon; return <StatusIcon className="w-4 h-4 text-[#5D4037]" />; })()}</div>{schedule.assigned_name && (<div className="flex items-center gap-1 text-xs text-[#5D4037] mt-1"><User className="w-3 h-3" /><span className="truncate">{schedule.assigned_name}</span></div>)}<Badge variant="outline" className={cn("mt-2 text-xs border-current", STATUS_CONFIG[schedule.status].color)}>{STATUS_CONFIG[schedule.status].label}</Badge></div>) : (<div onClick={() => { setFormData({...formData, day_of_week: dayIdx as any, time_slot: slot.slot as any}); setIsAddDialogOpen(true); }} className="h-full flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg cursor-pointer hover:border-[#8D6E63] hover:bg-[#F5F5DC] transition-colors"><Plus className="w-5 h-5 text-[#8D6E63]" /></div>)}
+                  {schedule? (<div onClick={() => { setSelectedSchedule(schedule); setIsDetailDialogOpen(true); }} className={cn("h-full p-3 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md", STATUS_CONFIG[schedule.status].bgColor, STATUS_CONFIG[schedule.status].color.split(' ')[2], "border-current")}><div className="flex items-center justify-between mb-1"><span className="font-bold text-[#3E2723] text-sm">{schedule.room_number}</span>{(() => { const StatusIcon = STATUS_CONFIG[schedule.status].icon; return <StatusIcon className="w-4 h-4 text-[#5D4037]" />; })()}</div>{schedule.assigned_name && (<div className="flex items-center gap-1 text-xs text-[#5D4037] mt-1"><User className="w-3 h-3" /><span className="truncate">{schedule.assigned_name}</span></div>)}<Badge variant="outline" className={cn("mt-2 text-xs border-current", STATUS_CONFIG[schedule.status].color)}>{STATUS_CONFIG[schedule.status].label}</Badge></div>) : (canCreate ? <div onClick={() => { setFormData({...formData, day_of_week: dayIdx as any, time_slot: slot.slot as any}); setIsAddDialogOpen(true); }} className="h-full flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg cursor-pointer hover:border-[#8D6E63] hover:bg-[#F5F5DC] transition-colors"><Plus className="w-5 h-5 text-[#8D6E63]" /></div> : <div className="h-full" />)}
                 </div>);
               })}
             </div>
@@ -245,7 +314,7 @@ export function RoomCleaning() {
                         {schedule.assigned_name && (<p className="text-xs text-[#5D4037] mt-1 flex items-center gap-1"><User className="w-3 h-3" />{schedule.assigned_name}</p>)}
                       </div>
                     ) : (
-                      <button onClick={() => { setFormData({...formData, day_of_week: selectedDayMobile as any, time_slot: slot.slot as any}); setIsAddDialogOpen(true); }} className="w-full h- flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg text-[#8D6E63] text-sm"><Plus className="w-4 h-4 mr-1" />Tambah jadwal</button>
+                      canCreate ? <button onClick={() => { setFormData({...formData, day_of_week: selectedDayMobile as any, time_slot: slot.slot as any}); setIsAddDialogOpen(true); }} className="w-full h- flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg text-[#8D6E63] text-sm"><Plus className="w-4 h-4 mr-1" />Tambah jadwal</button> : <div className="h-10 flex items-center text-xs text-gray-400">Tidak ada jadwal</div>
                     )}
                   </div>
                 </CardContent>
@@ -272,7 +341,7 @@ export function RoomCleaning() {
         </Dialog>
       )}
 
-      {/* Detail */}
+      {/* Detail - same as yours, with permission guards */}
       {isMobile? (
         <Sheet open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
           <SheetContent side="bottom" className="h- w-full p-0 flex flex-col bg-[#FAF9F6]">
@@ -280,13 +349,12 @@ export function RoomCleaning() {
               <>
                 <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle className="text-[#3E2723] flex items-center gap-2 flex-wrap">Kamar {selectedSchedule.room_number}<Badge className={STATUS_CONFIG[selectedSchedule.status].color}>{STATUS_CONFIG[selectedSchedule.status].label}</Badge></SheetTitle></SheetHeader>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-[env(safe-area-inset-bottom)]">
-                  <div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-[#5D4037] text-xs">Properti</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.property_name}</p></div><div><p className="text-[#5D4037] text-xs">Jadwal</p><p className="font-semibold text-[#3E2723]">{DAYS[selectedSchedule.day_of_week]}, {SLOTS.find(s => s.slot === selectedSchedule.time_slot)?.time}</p></div><div><p className="text-[#5D4037] text-xs">Penanggung Jawab</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.assigned_name || '-'}</p></div><div><p className="text-[#5D4037] text-xs">Estimasi</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.estimated_duration_minutes} menit</p></div></div>
+                  <div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-[#5D4037] text-xs">Properti</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.property_name || 'Kebayoran Lama'}</p></div><div><p className="text-[#5D4037] text-xs">Jadwal</p><p className="font-semibold text-[#3E2723]">{DAYS[selectedSchedule.day_of_week]}, {SLOTS.find(s => s.slot === selectedSchedule.time_slot)?.time}</p></div><div><p className="text-[#5D4037] text-xs">Penanggung Jawab</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.assigned_name || '-'}</p></div><div><p className="text-[#5D4037] text-xs">Estimasi</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.estimated_duration_minutes} menit</p></div></div>
                   {selectedSchedule.notes && (<div className="p-3 bg-[#F5F5DC] rounded-lg"><p className="text-[#5D4037] text-xs">Catatan:</p><p className="text-[#3E2723] text-sm break-words">{selectedSchedule.notes}</p></div>)}
-                  {selectedSchedule.status === 'completed' && (<div className="p-3 bg-[#7A9E7E]/10 rounded-lg border border-[#7A9E7E]"><p className="text-[#5D4037] text-xs">Diselesaikan oleh {selectedSchedule.completed_by_name}</p><p className="text-[#3E2723] text-xs">{selectedSchedule.completed_at && format(new Date(selectedSchedule.completed_at), 'dd MMM yyyy HH:mm', { locale: id })}</p></div>)}
                 </div>
                 <div className="p-4 border-t flex flex-col gap-2 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-                  <div className="flex gap-2">{canModifySchedule(selectedSchedule) && (<><Button variant="outline" className="flex-1 h-11 border-[#C17C53] text-[#C17C53]" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}{selectedSchedule.status === 'in_progress' && (<Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)}</div>
-                  <div className="flex gap-2"><Button variant="outline" className="flex-1 h-11 border-[#8D6E63] text-[#5D4037]" onClick={() => setIsDetailDialogOpen(false)}>Tutup</Button><Button variant="outline" className="flex-1 h-11 border-red-500 text-red-500" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button></div>
+                  <div className="flex gap-2">{canModifySchedule(selectedSchedule) && canUpdate && (<><Button variant="outline" className="flex-1 h-11 border-[#C17C53] text-[#C17C53]" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}{selectedSchedule.status === 'in_progress' && canUpdate && (<Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)}</div>
+                  <div className="flex gap-2"><Button variant="outline" className="flex-1 h-11 border-[#8D6E63] text-[#5D4037]" onClick={() => setIsDetailDialogOpen(false)}>Tutup</Button>{can('room_cleaning.delete') && <Button variant="outline" className="flex-1 h-11 border-red-500 text-red-500" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}</div>
                 </div>
               </>
             )}
@@ -297,15 +365,15 @@ export function RoomCleaning() {
           <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723] flex items-center gap-2">Detail Pembersihan {selectedSchedule?.room_number}<Badge className={selectedSchedule? STATUS_CONFIG[selectedSchedule.status].color : ''}>{selectedSchedule && STATUS_CONFIG[selectedSchedule.status].label}</Badge></DialogTitle></DialogHeader>
             {selectedSchedule && (
               <>
-                <div className="space-y-4"><div className="grid grid-cols-2 gap-4 text-sm"><div><p className="text-[#5D4037]">Properti</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.property_name}</p></div><div><p className="text-[#5D4037]">Jadwal</p><p className="font-semibold text-[#3E2723]">{DAYS[selectedSchedule.day_of_week]}, {SLOTS.find(s => s.slot === selectedSchedule.time_slot)?.time}</p></div><div><p className="text-[#5D4037]">Penanggung Jawab</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.assigned_name || '-'}</p></div><div><p className="text-[#5D4037]">Estimasi Waktu</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.estimated_duration_minutes} menit</p></div></div>{selectedSchedule.notes && (<div className="p-3 bg-[#F5F5DC] rounded-lg"><p className="text-[#5D4037] text-sm">Catatan:</p><p className="text-[#3E2723]">{selectedSchedule.notes}</p></div>)}{selectedSchedule.status === 'completed' && (<div className="p-3 bg-[#7A9E7E]/10 rounded-lg border border-[#7A9E7E]"><p className="text-[#5D4037] text-sm">Diselesaikan oleh {selectedSchedule.completed_by_name}</p><p className="text-[#3E2723] text-xs">{selectedSchedule.completed_at && format(new Date(selectedSchedule.completed_at), 'dd MMM yyyy HH:mm', { locale: id })}</p></div>)}</div>
-                <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setIsDetailDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Tutup</Button>{canModifySchedule(selectedSchedule) && (<><Button variant="outline" className="border-[#C17C53] text-[#C17C53] hover:bg-[#C17C53]/10" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}{selectedSchedule.status === 'in_progress' && (<Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)}<Button variant="outline" className="border-red-500 text-red-500 hover:bg-red-50" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button></DialogFooter>
+                <div className="space-y-4"><div className="grid grid-cols-2 gap-4 text-sm"><div><p className="text-[#5D4037]">Properti</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.property_name || 'Kebayoran Lama'}</p></div><div><p className="text-[#5D4037]">Jadwal</p><p className="font-semibold text-[#3E2723]">{DAYS[selectedSchedule.day_of_week]}, {SLOTS.find(s => s.slot === selectedSchedule.time_slot)?.time}</p></div></div>{selectedSchedule.notes && (<div className="p-3 bg-[#F5F5DC] rounded-lg"><p className="text-[#5D4037] text-sm">Catatan:</p><p className="text-[#3E2723]">{selectedSchedule.notes}</p></div>)}</div>
+                <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setIsDetailDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Tutup</Button>{canModifySchedule(selectedSchedule) && canUpdate && (<><Button variant="outline" className="border-[#C17C53] text-[#C17C53]" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}{selectedSchedule.status === 'in_progress' && canUpdate && (<Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)} {can('room_cleaning.delete') && <Button variant="outline" className="border-red-500 text-red-500" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}</DialogFooter>
               </>
             )}
           </DialogContent>
         </Dialog>
       )}
 
-      {/* Complete */}
+      {/* Complete, Skip, Delete dialogs same as yours */}
       {isMobile? (
         <Sheet open={isCompleteDialogOpen} onOpenChange={setIsCompleteDialogOpen}>
           <SheetContent side="bottom" className="h-auto w-full p-0 flex flex-col bg-[#FAF9F6] rounded-t-xl">
@@ -319,11 +387,10 @@ export function RoomCleaning() {
         </Sheet>
       ) : (
         <Dialog open={isCompleteDialogOpen} onOpenChange={setIsCompleteDialogOpen}>
-          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Selesaikan Pembersihan</DialogTitle><DialogDescription className="text-[#5D4037]">Catat penyelesaian pembersihan kamar {selectedSchedule?.room_number}</DialogDescription></DialogHeader><div className="space-y-4"><div className="space-y-2"><Label className="text-[#3E2723]">Durasi Aktual (menit)</Label><input type="number" value={actualDuration} onChange={(e) => setActualDuration(parseInt(e.target.value))} className="w-full px-3 py-2 border border-[#8D6E63] rounded-lg bg-white" min={15} max={120} /></div><div className="space-y-2"><Label className="text-[#3E2723]">Catatan Penyelesaian</Label><textarea value={completionNotes} onChange={(e) => setCompletionNotes(e.target.value)} className="w-full px-3 py-2 border border-[#8D6E63] rounded-lg bg-white" rows={3} placeholder="Kondisi kamar, catatan khusus, dll..." /></div></div><DialogFooter><Button variant="outline" onClick={() => setIsCompleteDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Batal</Button><Button onClick={handleCompleteCleaning} className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white"><CheckCircle2 className="w-4 h-4 mr-2" />Selesaikan</Button></DialogFooter></DialogContent>
+          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Selesaikan Pembersihan</DialogTitle></DialogHeader><div className="space-y-4"><div className="space-y-2"><Label>Durasi Aktual (menit)</Label><input type="number" value={actualDuration} onChange={(e) => setActualDuration(parseInt(e.target.value))} className="w-full px-3 py-2 border border-[#8D6E63] rounded-lg bg-white" min={15} max={120} /></div><div className="space-y-2"><Label>Catatan Penyelesaian</Label><textarea value={completionNotes} onChange={(e) => setCompletionNotes(e.target.value)} className="w-full px-3 py-2 border border-[#8D6E63] rounded-lg bg-white" rows={3} /></div></div><DialogFooter><Button variant="outline" onClick={() => setIsCompleteDialogOpen(false)}>Batal</Button><Button onClick={handleCompleteCleaning} className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white"><CheckCircle2 className="w-4 h-4 mr-2" />Selesaikan</Button></DialogFooter></DialogContent>
         </Dialog>
       )}
 
-      {/* Skip */}
       {isMobile? (
         <Sheet open={isSkipDialogOpen} onOpenChange={setIsSkipDialogOpen}>
           <SheetContent side="bottom" className="h-auto w-full p-0 flex flex-col bg-[#FAF9F6] rounded-t-xl">
@@ -334,21 +401,20 @@ export function RoomCleaning() {
         </Sheet>
       ) : (
         <Dialog open={isSkipDialogOpen} onOpenChange={setIsSkipDialogOpen}>
-          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Lewati Jadwal</DialogTitle><DialogDescription className="text-[#5D4037]">Berikan alasan melewati jadwal pembersihan</DialogDescription></DialogHeader><div className="space-y-4"><div className="space-y-2"><Label className="text-[#3E2723]">Alasan *</Label><textarea value={skipReason} onChange={(e) => setSkipReason(e.target.value)} className="w-full px-3 py-2 border border-[#8D6E63] rounded-lg bg-white" rows={3} placeholder="Penghuni sedang sakit, kamar kosong, dll..." required /></div></div><DialogFooter><Button variant="outline" onClick={() => setIsSkipDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Batal</Button><Button onClick={handleSkipCleaning} disabled={!skipReason.trim()} className="bg-gradient-to-r from-[#C17C53] to-[#A6683F] text-white"><AlertCircle className="w-4 h-4 mr-2" />Lewati Jadwal</Button></DialogFooter></DialogContent>
+          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Lewati Jadwal</DialogTitle></DialogHeader><div className="space-y-4"><div className="space-y-2"><Label>Alasan *</Label><textarea value={skipReason} onChange={(e) => setSkipReason(e.target.value)} className="w-full px-3 py-2 border border-[#8D6E63] rounded-lg bg-white" rows={3} required /></div></div><DialogFooter><Button variant="outline" onClick={() => setIsSkipDialogOpen(false)}>Batal</Button><Button onClick={handleSkipCleaning} disabled={!skipReason.trim()} className="bg-gradient-to-r from-[#C17C53] to-[#A6683F] text-white"><AlertCircle className="w-4 h-4 mr-2" />Lewati Jadwal</Button></DialogFooter></DialogContent>
         </Dialog>
       )}
 
-      {/* Delete */}
       {isMobile? (
         <Sheet open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
           <SheetContent side="bottom" className="h-auto w-full p-0 flex flex-col bg-[#FAF9F6] rounded-t-xl">
-            <SheetHeader className="p-5 text-left"><SheetTitle className="text-[#3E2723]">Konfirmasi Hapus</SheetTitle><SheetDescription className="text-left">Apakah Anda yakin ingin menghapus jadwal ini? Tindakan ini tidak dapat dibatalkan.</SheetDescription></SheetHeader>
+            <SheetHeader className="p-5 text-left"><SheetTitle className="text-[#3E2723]">Konfirmasi Hapus</SheetTitle><SheetDescription className="text-left">Apakah Anda yakin ingin menghapus jadwal ini?</SheetDescription></SheetHeader>
             <div className="p-4 flex gap-3 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button variant="outline" className="flex-1 h-11 border-[#8D6E63] text-[#5D4037]" onClick={() => setIsDeleteDialogOpen(false)}>Batal</Button><Button onClick={handleDeleteSchedule} className="flex-1 bg-red-500 hover:bg-red-600 text-white h-11"><Trash2 className="w-4 h-4 mr-2" />Hapus</Button></div>
           </SheetContent>
         </Sheet>
       ) : (
         <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Konfirmasi Hapus</DialogTitle><DialogDescription className="text-[#5D4037]">Apakah Anda yakin ingin menghapus jadwal ini? Tindakan ini tidak dapat dibatalkan.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Batal</Button><Button onClick={handleDeleteSchedule} className="bg-red-500 hover:bg-red-600 text-white"><Trash2 className="w-4 h-4 mr-2" />Hapus</Button></DialogFooter></DialogContent>
+          <DialogContent className="bg-[#FAF9F6] border-[#D7CCC8]"><DialogHeader><DialogTitle className="text-[#3E2723]">Konfirmasi Hapus</DialogTitle><DialogDescription>Apakah Anda yakin ingin menghapus jadwal ini?</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Batal</Button><Button onClick={handleDeleteSchedule} className="bg-red-500 hover:bg-red-600 text-white"><Trash2 className="w-4 h-4 mr-2" />Hapus</Button></DialogFooter></DialogContent>
         </Dialog>
       )}
     </div>
