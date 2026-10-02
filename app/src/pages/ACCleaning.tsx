@@ -1,4 +1,4 @@
-// app/src/pages/ACCleaning.tsx - FOCUS FIX - FormContent outside
+// app/src/pages/ACCleaning.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like)
 import { useState, useEffect } from 'react';
 import { Plus, Search, Wind, CheckCircle, AlertCircle, Calendar, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -7,28 +7,15 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Label } from '@/components/ui/label';
 import { acCleaningAPI, propertiesAPI, roomsAPI } from '@/services/api';
 import type { ACCleaningSchedule, Property, Room } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const MONTH_OPTIONS = [
   { value: '1', label: 'Januari' }, { value: '2', label: 'Februari' },
@@ -39,7 +26,6 @@ const MONTH_OPTIONS = [
   { value: '11', label: 'November' }, { value: '12', label: 'Desember' },
 ];
 
-// FIX: stable form outside main component
 function AddACForm({ formData, setFormData, properties, rooms }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[] }) {
   return (
     <div className="space-y-4">
@@ -68,6 +54,7 @@ function AddACForm({ formData, setFormData, properties, rooms }: { formData: any
 
 export function ACCleaning() {
   const isMobile = useIsMobile();
+  const { can } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSchedule, setSelectedSchedule] = useState<ACCleaningSchedule | null>(null);
   const [activeTab, setActiveTab] = useState('upcoming');
@@ -79,6 +66,10 @@ export function ACCleaning() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedPropertyFilter, setSelectedPropertyFilter] = useState('');
   const [selectedMonthFilter, setSelectedMonthFilter] = useState('');
+
+  const canCreate = can('ac_cleaning.create');
+  const canUpdate = can('ac_cleaning.update');
+  const canDelete = can('ac_cleaning.delete');
 
   const [formData, setFormData] = useState({
     property_id: '', room_id: '', ac_unit_id: '',
@@ -145,7 +136,7 @@ export function ACCleaning() {
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Jadwal Pembersihan AC</h1><p className="text-sm sm:text-base text-gray-500">Kelola jadwal perawatan AC rutin (6 bulan)</p></div>
-        <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Jadwal</Button>
+        {canCreate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Jadwal</Button>)}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full">
@@ -207,7 +198,7 @@ export function ACCleaning() {
             </>
           )}
 
-          {!isLoading && filteredSchedules.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada jadwal AC</p><Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Jadwal</Button></div>)}
+          {!isLoading && filteredSchedules.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada jadwal AC</p>{canCreate && (<Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Jadwal</Button>)}</div>)}
         </TabsContent>
       </Tabs>
 
@@ -227,7 +218,6 @@ export function ACCleaning() {
         </Dialog>
       )}
 
-      {/* Detail & Delete unchanged */}
       {isMobile? (
         <Sheet open={!!selectedSchedule &&!isDeleteDialogOpen} onOpenChange={() => setSelectedSchedule(null)}>
           <SheetContent side="bottom" className="h- w-full p-0 flex flex-col bg-white">
@@ -245,9 +235,9 @@ export function ACCleaning() {
                     </div>
                     {selectedSchedule.notes && (<div className="bg-gray-50 p-3 rounded-lg"><Label className="text-xs text-gray-500">Catatan</Label><p className="mt-1 text-sm break-words">{selectedSchedule.notes}</p></div>)}
                   </div>
-                  <div className="p-4 border-t grid grid-cols-2 gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+                  <div className="p-4 border-t grid gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))] grid-cols-2">
                     <Button variant="outline" className="h-11" onClick={() => setSelectedSchedule(null)}>Tutup</Button>
-                    {selectedSchedule.status!== 'completed'? (<Button className="bg-green-600 hover:bg-green-700 h-11" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>) : (<Button variant="outline" className="text-red-600 h-11" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}
+                    {selectedSchedule.status!== 'completed'? (canUpdate ? (<Button className="bg-green-600 hover:bg-green-700 h-11" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>) : (<Button variant="outline" disabled className="h-11">Read-only</Button>)) : (canDelete ? (<Button variant="outline" className="text-red-600 h-11" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>) : (<Button variant="outline" disabled className="h-11">Read-only</Button>))}
                   </div>
                 </>
               );
@@ -259,7 +249,7 @@ export function ACCleaning() {
           <DialogContent className="max-w-lg"><DialogHeader><DialogTitle className="flex items-center gap-2"><Wind className="w-5 h-5" />Detail Jadwal AC Cleaning</DialogTitle><DialogDescription>Informasi detail</DialogDescription></DialogHeader>
             {selectedSchedule && (() => {
               const room = rooms.find(r => r.id === selectedSchedule.room_id);
-              return (<><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Status</p><Badge className={cn("text-sm mt-1", selectedSchedule.status === 'completed' && "bg-green-100 text-green-700", selectedSchedule.status === 'pending' && "bg-blue-100 text-blue-700", selectedSchedule.status === 'overdue' && "bg-red-100 text-red-700")}>{selectedSchedule.status === 'completed'? 'Selesai' : selectedSchedule.status === 'pending'? 'Mendatang' : 'Terlambat'}</Badge></div><div className="text-right"><p className="text-sm text-gray-500">Interval</p><p className="font-medium">{selectedSchedule.schedule_interval_days} hari</p></div></div><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number}</span></div><div className="flex justify-between"><span className="text-gray-500">Unit AC</span><span className="font-mono">{selectedSchedule.ac_unit_id || '-'}</span></div></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedSchedule(null)}>Tutup</Button><Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>{selectedSchedule.status!== 'completed' && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>)}</DialogFooter></>);
+              return (<><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Status</p><Badge className={cn("text-sm mt-1", selectedSchedule.status === 'completed' && "bg-green-100 text-green-700", selectedSchedule.status === 'pending' && "bg-blue-100 text-blue-700", selectedSchedule.status === 'overdue' && "bg-red-100 text-red-700")}>{selectedSchedule.status === 'completed'? 'Selesai' : selectedSchedule.status === 'pending'? 'Mendatang' : 'Terlambat'}</Badge></div><div className="text-right"><p className="text-sm text-gray-500">Interval</p><p className="font-medium">{selectedSchedule.schedule_interval_days} hari</p></div></div><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number}</span></div><div className="flex justify-between"><span className="text-gray-500">Unit AC</span><span className="font-mono">{selectedSchedule.ac_unit_id || '-'}</span></div></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedSchedule(null)}>Tutup</Button>{canDelete && (<Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}{selectedSchedule.status!== 'completed' && canUpdate && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>)}</DialogFooter></>);
             })()}
           </DialogContent>
         </Dialog>

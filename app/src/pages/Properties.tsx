@@ -1,4 +1,4 @@
-// app/src/pages/Properties.tsx - FOCUS FIX - FormContent outside
+// app/src/pages/Properties.tsx - Step 7 Owner Read-Only (no banner, no action buttons for owner)
 import { useState, useEffect } from 'react';
 import { Plus, Search, Building2, MapPin, Phone, Eye, Edit, Trash2, MoreHorizontal } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,8 +15,8 @@ import { propertiesAPI, roomsAPI } from '@/services/api';
 import { getCurrentUser } from '@/services/auth';
 import type { Property, Room } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { usePermissions } from '@/hooks/usePermissions';
 
-// FIX: stable form outside
 function AddPropertyForm({ formData, setFormData }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>> }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
@@ -79,6 +79,7 @@ function AddPropertyForm({ formData, setFormData }: { formData: any; setFormData
 
 export function Properties() {
   const isMobile = useIsMobile();
+  const { can } = usePermissions();
   const [properties, setProperties] = useState<Property[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -87,6 +88,10 @@ export function Properties() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+
+  const canCreate = can('properties.create');
+  const canUpdate = can('properties.update');
+  const canDelete = can('properties.delete');
 
   const [formData, setFormData] = useState({
     name: '', property_type: 'male' as 'male' | 'female' | 'mixed', address: '', city: '', district: '', postal_code: '', contact_phone: '', property_manager_id: '', total_floors: 0, total_rooms: 0,
@@ -165,7 +170,7 @@ export function Properties() {
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Manajemen Properti</h1><p className="text-sm sm:text-base text-gray-500">Kelola semua properti kos Anda</p></div>
-        <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={openAddDialog}><Plus className="w-4 h-4 mr-2" />Tambah Properti</Button>
+        {canCreate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={openAddDialog}><Plus className="w-4 h-4 mr-2" />Tambah Properti</Button>)}
       </div>
 
       <div className="relative w-full sm:max-w-md">
@@ -181,16 +186,18 @@ export function Properties() {
               <div className="h-44 sm:h-48 bg-gray-200 relative w-full">
                 <img src={property.property_photos?.[0] || 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600'} alt={property.name} className="w-full h-full object-cover" />
                 <div className="absolute top-3 left-3">{getPropertyTypeBadge(property.property_type)}</div>
-                <div className="absolute top-3 right-3">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="bg-white/90 hover:bg-white h-11 w-11 sm:h-9 sm:w-9"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => setSelectedProperty(property)} className="h-11 sm:h-9"><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openEditDialog(property)} className="h-11 sm:h-9"><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>
-                      <DropdownMenuItem className="text-red-600 h-11 sm:h-9" onClick={() => handleDelete(property.id)}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                {(canUpdate || canDelete) && (
+                  <div className="absolute top-3 right-3">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="bg-white/90 hover:bg-white h-11 w-11 sm:h-9 sm:w-9"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setSelectedProperty(property)} className="h-11 sm:h-9"><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>
+                        {canUpdate && (<DropdownMenuItem onClick={() => openEditDialog(property)} className="h-11 sm:h-9"><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>)}
+                        {canDelete && (<DropdownMenuItem className="text-red-600 h-11 sm:h-9" onClick={() => handleDelete(property.id)}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>)}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
               </div>
               <CardContent className="p-4 sm:p-5">
                 <h3 className="text-base sm:text-lg font-semibold text-gray-900 truncate">{property.name}</h3>
@@ -237,12 +244,12 @@ export function Properties() {
       {isMobile? (
         <Sheet open={!!selectedProperty &&!isAddDialogOpen} onOpenChange={() => setSelectedProperty(null)}>
           <SheetContent side="bottom" className="h-[85vh] w-full p-0 flex flex-col bg-white">
-            {selectedProperty && (<><SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle className="flex items-center gap-2 text-base"><Building2 className="w-5 h-5 shrink-0" /><span className="truncate">{selectedProperty.name}</span></SheetTitle><SheetDescription>Detail lengkap properti kos</SheetDescription></SheetHeader><div className="flex-1 overflow-y-auto p-4 space-y-5 pb-[env(safe-area-inset-bottom)]"><div className="grid grid-cols-2 gap-2">{(selectedProperty.property_photos || ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=400']).slice(0,4).map((photo, idx) => (<div key={idx} className={`${idx === 0? 'col-span-2' : ''} rounded-lg overflow-hidden aspect-video`}><img src={photo} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" /></div>))}</div></div><div className="p-4 border-t flex gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button variant="outline" className="flex-1 h-11" onClick={() => setSelectedProperty(null)}>Tutup</Button><Button className="flex-1 bg-[#1A3D5C] hover:bg-[#0F2744] h-11" onClick={() => { const p = selectedProperty; setSelectedProperty(null); setTimeout(() => p && openEditDialog(p), 100); }}><Edit className="w-4 h-4 mr-2" />Edit</Button></div></>)}
+            {selectedProperty && (<><SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle className="flex items-center gap-2 text-base"><Building2 className="w-5 h-5 shrink-0" /><span className="truncate">{selectedProperty.name}</span></SheetTitle><SheetDescription>Detail lengkap properti kos</SheetDescription></SheetHeader><div className="flex-1 overflow-y-auto p-4 space-y-5 pb-[env(safe-area-inset-bottom)]"><div className="grid grid-cols-2 gap-2">{(selectedProperty.property_photos || ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=400']).slice(0,4).map((photo, idx) => (<div key={idx} className={`${idx === 0? 'col-span-2' : ''} rounded-lg overflow-hidden aspect-video`}><img src={photo} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" /></div>))}</div></div><div className="p-4 border-t flex gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button variant="outline" className="flex-1 h-11" onClick={() => setSelectedProperty(null)}>Tutup</Button>{canUpdate && (<Button className="flex-1 bg-[#1A3D5C] hover:bg-[#0F2744] h-11" onClick={() => { const p = selectedProperty; setSelectedProperty(null); setTimeout(() => p && openEditDialog(p), 100); }}><Edit className="w-4 h-4 mr-2" />Edit</Button>)}</div></>)}
           </SheetContent>
         </Sheet>
       ) : (
         <Dialog open={!!selectedProperty &&!isAddDialogOpen} onOpenChange={() => setSelectedProperty(null)}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">{selectedProperty && (<><DialogHeader><DialogTitle className="flex items-center gap-2"><Building2 className="w-5 h-5" />{selectedProperty.name}</DialogTitle><DialogDescription>Detail lengkap properti kos</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setSelectedProperty(null)}>Tutup</Button><Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => { setSelectedProperty(null); setTimeout(() => openEditDialog(selectedProperty), 100); }}><Edit className="w-4 h-4 mr-2" />Edit Properti</Button></DialogFooter></>)}</DialogContent>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">{selectedProperty && (<><DialogHeader><DialogTitle className="flex items-center gap-2"><Building2 className="w-5 h-5" />{selectedProperty.name}</DialogTitle><DialogDescription>Detail lengkap properti kos</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setSelectedProperty(null)}>Tutup</Button>{canUpdate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => { setSelectedProperty(null); setTimeout(() => openEditDialog(selectedProperty), 100); }}><Edit className="w-4 h-4 mr-2" />Edit Properti</Button>)}</DialogFooter></>)}</DialogContent>
         </Dialog>
       )}
     </div>

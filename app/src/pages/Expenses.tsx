@@ -1,4 +1,4 @@
-// app/src/pages/Expenses.tsx - FOCUS FIX - FormFields outside
+// app/src/pages/Expenses.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like)
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, Receipt, Download, Edit, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,8 +15,8 @@ import type { Expense, Property, Room } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate, getExpenseTypeLabel } from '@/lib/format';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { usePermissions } from '@/hooks/usePermissions';
 
-// FIX: stable form outside component
 function AddExpenseForm({ formData, setFormData, properties, rooms, isEdit = false }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[]; isEdit?: boolean }) {
   return (
     <div className="space-y-4">
@@ -45,6 +45,7 @@ function AddExpenseForm({ formData, setFormData, properties, rooms, isEdit = fal
 
 export function Expenses() {
   const isMobile = useIsMobile();
+  const { can } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -57,6 +58,10 @@ export function Expenses() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
+  const canCreate = can('expenses.create');
+  const canUpdate = can('expenses.update');
+  const canDelete = can('expenses.delete');
 
   const [formData, setFormData] = useState({
     property_id: '', room_id: '', expense_type: 'electricity', provider_name: '', amount: 0,
@@ -144,23 +149,11 @@ export function Expenses() {
     catch (error) { toast.error('Gagal menghapus pengeluaran'); }
   };
 
-  const openEditDialog = (expense: Expense) => {
-    setSelectedExpense(expense);
-    setFormData({
-      property_id: expense.property_id, room_id: expense.room_id || '', expense_type: expense.expense_type,
-      provider_name: expense.provider_name, amount: expense.amount,
-      expense_date: new Date(expense.expense_date).toISOString().split('T')[0],
-      description: expense.description || '', approval_status: expense.approval_status, reported_by: expense.reported_by || '',
-    });
-    setIsEditDialogOpen(true);
-  };
-  const openDeleteDialog = (expense: Expense) => { setSelectedExpense(expense); setIsDeleteDialogOpen(true); };
-
   return (
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Pengeluaran</h1><p className="text-sm sm:text-base text-gray-500">Catat dan kelola semua pengeluaran operasional</p></div>
-        <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => { resetForm(); setIsAddDialogOpen(true); }}><Plus className="w-4 h-4 mr-2" />Tambah Pengeluaran</Button>
+        {canCreate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => { resetForm(); setIsAddDialogOpen(true); }}><Plus className="w-4 h-4 mr-2" />Tambah Pengeluaran</Button>)}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full">
@@ -215,7 +208,7 @@ export function Expenses() {
         </>
       )}
 
-      {!isLoading && filteredExpenses.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada pengeluaran ditemukan</p><Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Pengeluaran</Button></div>)}
+      {!isLoading && filteredExpenses.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada pengeluaran ditemukan</p>{canCreate && (<Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Pengeluaran</Button>)}</div>)}
 
       {isMobile? (
         <Sheet open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
@@ -250,10 +243,11 @@ export function Expenses() {
                     <div className="pt-2"><span className="text-gray-500 text-xs">Keterangan</span><p className="font-medium mt-1 break-words bg-gray-50 p-3 rounded-lg">{selectedExpense.description || '-'}</p></div>
                   </div>
                 </div>
-                <div className="p-4 border-t grid grid-cols-3 gap-2 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+                <div className="p-4 border-t grid gap-2 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))] grid-cols-3">
                   <Button variant="outline" className="h-11" onClick={() => setSelectedExpense(null)}>Tutup</Button>
-                  <Button variant="outline" className="text-red-600 h-11" onClick={() => { const e=selectedExpense; setSelectedExpense(null); setTimeout(()=>{ setSelectedExpense(e); setIsDeleteDialogOpen(true); },100); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>
-                  <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] h-11" onClick={() => { if (selectedExpense) { const e = selectedExpense; setSelectedExpense(null); setTimeout(() => { setSelectedExpense(e); const exp=e; setFormData({ property_id: exp.property_id, room_id: exp.room_id || '', expense_type: exp.expense_type, provider_name: exp.provider_name, amount: exp.amount, expense_date: new Date(exp.expense_date).toISOString().split('T')[0], description: exp.description || '', approval_status: exp.approval_status, reported_by: exp.reported_by || '', }); setIsEditDialogOpen(true); }, 100); } }}><Edit className="w-4 h-4 mr-2" />Edit</Button>
+                  {canDelete && (<Button variant="outline" className="text-red-600 h-11" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}
+                  {canUpdate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] h-11" onClick={() => { if (selectedExpense) { const exp=selectedExpense; setFormData({ property_id: exp.property_id, room_id: exp.room_id || '', expense_type: exp.expense_type, provider_name: exp.provider_name, amount: exp.amount, expense_date: new Date(exp.expense_date).toISOString().split('T')[0], description: exp.description || '', approval_status: exp.approval_status, reported_by: exp.reported_by || '', }); setIsEditDialogOpen(true); } }}><Edit className="w-4 h-4 mr-2" />Edit</Button>)}
+                  {!canUpdate && !canDelete && (<Button variant="outline" disabled className="h-11 col-span-2">Read-only</Button>)}
                 </div>
               </>
             )}
@@ -265,9 +259,8 @@ export function Expenses() {
             {selectedExpense && (
               <>
                 <div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Jumlah Pengeluaran</p><p className="text-2xl font-bold text-gray-900">{formatCurrency(selectedExpense.amount)}</p></div><Badge className={cn(selectedExpense.approval_status === 'approved' && "bg-green-100 text-green-700", selectedExpense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", selectedExpense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{selectedExpense.approval_status === 'approved'? 'Disetujui' : selectedExpense.approval_status === 'pending'? 'Menunggu' : 'Ditolak'}</Badge></div>
-                  <div className="space-y-3"><div className="flex justify-between"><span className="text-gray-500">Tanggal</span><span className="font-medium">{formatDate(selectedExpense.expense_date)}</span></div><div className="flex justify-between"><span className="text-gray-500">Kategori</span><Badge variant="outline">{getExpenseTypeLabel(selectedExpense.expense_type)}</Badge></div>{selectedExpense.room_id && (<div className="flex justify-between"><span className="text-gray-500">Kamar</span><span className="font-medium">{rooms.find(r => r.id === selectedExpense.room_id)?.room_number}</span></div>)}<div className="flex justify-between"><span className="text-gray-500">Provider</span><span className="font-medium">{selectedExpense.provider_name}</span></div><div className="flex justify-between"><span className="text-gray-500">Keterangan</span><span>{selectedExpense.description || '-'}</span></div><div className="flex justify-between"><span className="text-gray-500">Properti</span><span className="font-medium">{properties.find(p => p.id === selectedExpense.property_id)?.name}</span></div></div>
                 </div>
-                <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedExpense(null)}>Tutup</Button><Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button><Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => { const exp=selectedExpense; setFormData({ property_id: exp.property_id, room_id: exp.room_id || '', expense_type: exp.expense_type, provider_name: exp.provider_name, amount: exp.amount, expense_date: new Date(exp.expense_date).toISOString().split('T')[0], description: exp.description || '', approval_status: exp.approval_status, reported_by: exp.reported_by || '', }); setIsEditDialogOpen(true); }}><Edit className="w-4 h-4 mr-2" />Edit</Button></DialogFooter>
+                <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedExpense(null)}>Tutup</Button>{canDelete && (<Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}{canUpdate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => { const exp=selectedExpense; setFormData({ property_id: exp.property_id, room_id: exp.room_id || '', expense_type: exp.expense_type, provider_name: exp.provider_name, amount: exp.amount, expense_date: new Date(exp.expense_date).toISOString().split('T')[0], description: exp.description || '', approval_status: exp.approval_status, reported_by: exp.reported_by || '', }); setIsEditDialogOpen(true); }}><Edit className="w-4 h-4 mr-2" />Edit</Button>)}</DialogFooter>
               </>
             )}
           </DialogContent>

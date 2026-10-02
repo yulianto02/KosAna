@@ -1,3 +1,4 @@
+// app/src/pages/Dashboard.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like view, zero mutation buttons for owner)
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -10,27 +11,16 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  Legend
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { dashboardAPI, reportsAPI, paymentsAPI, acCleaningAPI, maintenanceAPI } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatPercentage } from '@/lib/format';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const COLORS = ['#1A3D5C', '#4A6D8C', '#D4A84B', '#E8C878', '#0F2744', '#B08A3A'];
 
-// Updated to snake_case to match PostgreSQL API response
 interface DashboardStats {
   total_properties: number;
   total_rooms: number;
@@ -45,6 +35,7 @@ interface DashboardStats {
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const { can } = usePermissions();
   const [timeRange, setTimeRange] = useState('month');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [revenueData, setRevenueData] = useState<any[]>([]);
@@ -55,7 +46,13 @@ export function Dashboard() {
   const [maintenanceRequests, setMaintenanceRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch dashboard data
+  // Step 7 - owner has only *.view, so hide all create actions
+  const canCreateTenant = can('tenants.create');
+  const canCreatePayment = can('payments.create');
+  const canCreateExpense = can('expenses.create');
+  const canCreateLaundry = can('laundry.create');
+  const hasAnyCreate = canCreateTenant || canCreatePayment || canCreateExpense || canCreateLaundry;
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -69,13 +66,11 @@ export function Dashboard() {
           acCleaningAPI.getAll(),
           maintenanceAPI.getAll(),
         ]);
-        
         setStats(statsRes);
         setRevenueData(revenueRes);
         setOccupancyData(occupancyRes);
         setExpenseData(expenseRes);
         setPendingPayments(paymentsRes.slice(0, 5));
-        // Using snake_case property names
         setUpcomingAC(acRes.filter((s: any) => s.status === 'pending').slice(0, 3));
         setMaintenanceRequests(maintRes.filter((r: any) => r.status === 'reported').slice(0, 3));
       } catch (error) {
@@ -84,11 +79,9 @@ export function Dashboard() {
         setLoading(false);
       }
     };
-    
     fetchData();
   }, []);
 
-  // Recent activities (mock for now)
   const recentActivities = [
     { type: 'payment', message: 'Pembayaran dari Ahmad Fauzi diterima', time: '2 jam yang lalu', icon: CreditCard, color: 'green' },
     { type: 'maintenance', message: 'AC kamar 102 selesai dibersihkan', time: '4 jam yang lalu', icon: Wind, color: 'blue' },
@@ -96,7 +89,6 @@ export function Dashboard() {
     { type: 'maintenance', message: 'Request perbaikan lampu kamar 201', time: '8 jam yang lalu', icon: Wrench, color: 'orange' },
   ];
 
-  // Navigation handlers using react-router
   const handleAddTenant = () => navigate('/tenants');
   const handleGoToPayments = () => navigate('/payments');
   const handleGoToExpenses = () => navigate('/expenses');
@@ -112,7 +104,6 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
@@ -129,63 +120,27 @@ export function Dashboard() {
             <option value="month">Bulan Ini</option>
             <option value="year">Tahun Ini</option>
           </select>
-          <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10" onClick={handleAddTenant}>
-            <Plus className="w-4 h-4 mr-2" />
-            Tambah Penghuni
-          </Button>
+          {canCreateTenant && (
+            <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10" onClick={handleAddTenant}>
+              <Plus className="w-4 h-4 mr-2" />
+              Tambah Penghuni
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Stats Cards - using snake_case properties */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Total Properti"
-          value={stats?.total_properties?.toString() || '0'}
-          subtitle={`${stats?.total_rooms || 0} Total Kamar`}
-          icon={Building2}
-          trend="up"
-          trendValue="+1 bulan ini"
-          color="blue"
-        />
-        <StatCard
-          title="Okupansi"
-          value={`${formatPercentage(stats?.occupancy_rate || 0)}`}
-          subtitle={`${stats?.occupied_rooms || 0} Terisi / ${stats?.vacant_rooms || 0} Kosong`}
-          icon={DoorOpen}
-          trend="up"
-          trendValue="+2.5%"
-          color="green"
-        />
-        <StatCard
-          title="Pendapatan Bulan Ini"
-          value={formatCurrency(stats?.monthly_revenue || 0)}
-          subtitle={`${stats?.pending_payments || 0} Pembayaran Tertunda`}
-          icon={CreditCard}
-          trend="up"
-          trendValue="+5.2%"
-          color="gold"
-        />
-        <StatCard
-          title="Total Penghuni"
-          value={stats?.total_tenants?.toString() || '0'}
-          subtitle="Aktif"
-          icon={Users}
-          trend="neutral"
-          trendValue="Stabil"
-          color="purple"
-        />
+        <StatCard title="Total Properti" value={stats?.total_properties?.toString() || '0'} subtitle={`${stats?.total_rooms || 0} Total Kamar`} icon={Building2} trend="up" trendValue="+1 bulan ini" color="blue" />
+        <StatCard title="Okupansi" value={`${formatPercentage(stats?.occupancy_rate || 0)}`} subtitle={`${stats?.occupied_rooms || 0} Terisi / ${stats?.vacant_rooms || 0} Kosong`} icon={DoorOpen} trend="up" trendValue="+2.5%" color="green" />
+        <StatCard title="Pendapatan Bulan Ini" value={formatCurrency(stats?.monthly_revenue || 0)} subtitle={`${stats?.pending_payments || 0} Pembayaran Tertunda`} icon={CreditCard} trend="up" trendValue="+5.2%" color="gold" />
+        <StatCard title="Total Penghuni" value={stats?.total_tenants?.toString() || '0'} subtitle="Aktif" icon={Users} trend="neutral" trendValue="Stabil" color="purple" />
       </div>
 
-      {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Revenue Chart */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-lg font-semibold">Pendapatan 6 Bulan Terakhir</CardTitle>
-            <Badge variant="secondary" className="bg-green-100 text-green-700 shrink-0">
-              <TrendingUp className="w-3 h-3 mr-1" />
-              +8.5%
-            </Badge>
+            <Badge variant="secondary" className="bg-green-100 text-green-700 shrink-0"><TrendingUp className="w-3 h-3 mr-1" />+8.5%</Badge>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
@@ -200,14 +155,10 @@ export function Dashboard() {
             </ResponsiveContainer>
           </CardContent>
         </Card>
-
-        {/* Occupancy Chart */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-lg font-semibold">Tingkat Okupansi</CardTitle>
-            <Badge variant="secondary" className="bg-blue-100 text-blue-700 shrink-0">
-              Rata-rata {formatPercentage(stats?.occupancy_rate || 0)}
-            </Badge>
+            <Badge variant="secondary" className="bg-blue-100 text-blue-700 shrink-0">Rata-rata {formatPercentage(stats?.occupancy_rate || 0)}</Badge>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
@@ -223,189 +174,48 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* Bottom Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Expense Breakdown */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold">Pengeluaran per Kategori</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle className="text-lg font-semibold">Pengeluaran per Kategori</CardTitle></CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={expenseData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2} dataKey="amount">
-                  {expenseData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                <Legend verticalAlign="bottom" height={36} iconType="circle" formatter={(value) => <span className="text-xs">{value}</span>} />
-              </PieChart>
+              <PieChart><Pie data={expenseData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2} dataKey="amount">{expenseData.map((_, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip formatter={(value: number) => formatCurrency(value)} /><Legend verticalAlign="bottom" height={36} iconType="circle" formatter={(value) => <span className="text-xs">{value}</span>} /></PieChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
-
-        {/* Recent Activities */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg font-semibold">Aktivitas Terbaru</CardTitle>
-            <Button variant="ghost" size="sm" className="text-[#1A3D5C] shrink-0">
-              Lihat Semua
-              <ArrowRight className="w-4 h-4 ml-1" />
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {recentActivities.map((activity, index) => (
-                <div key={index} className="flex items-start gap-3">
-                  <div className={cn("w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0", activity.color === 'green' && "bg-green-100", activity.color === 'blue' && "bg-blue-100", activity.color === 'purple' && "bg-purple-100", activity.color === 'orange' && "bg-orange-100")}>
-                    <activity.icon className={cn("w-4 h-4", activity.color === 'green' && "text-green-600", activity.color === 'blue' && "text-blue-600", activity.color === 'purple' && "text-purple-600", activity.color === 'orange' && "text-orange-600")} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-900">{activity.message}</p>
-                    <p className="text-xs text-gray-500">{activity.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
+          <CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-lg font-semibold">Aktivitas Terbaru</CardTitle><Button variant="ghost" size="sm" className="text-[#1A3D5C] shrink-0">Lihat Semua<ArrowRight className="w-4 h-4 ml-1" /></Button></CardHeader>
+          <CardContent><div className="space-y-4">{recentActivities.map((activity, index) => (<div key={index} className="flex items-start gap-3"><div className={cn("w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0", activity.color === 'green' && "bg-green-100", activity.color === 'blue' && "bg-blue-100", activity.color === 'purple' && "bg-purple-100", activity.color === 'orange' && "bg-orange-100")}><activity.icon className={cn("w-4 h-4", activity.color === 'green' && "text-green-600", activity.color === 'blue' && "text-blue-600", activity.color === 'purple' && "text-purple-600", activity.color === 'orange' && "text-orange-600")} /></div><div className="flex-1 min-w-0"><p className="text-sm text-gray-900">{activity.message}</p><p className="text-xs text-gray-500">{activity.time}</p></div></div>))}</div></CardContent>
         </Card>
-
-        {/* Upcoming Tasks - using snake_case property names */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg font-semibold">Tugas Mendatang</CardTitle>
-            <Button variant="ghost" size="sm" className="text-[#1A3D5C] shrink-0">
-              Lihat Semua
-              <ArrowRight className="w-4 h-4 ml-1" />
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {/* Pending Payments - using snake_case */}
-              {pendingPayments.length > 0 && (
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                    <AlertCircle className="w-4 h-4 text-red-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900">{pendingPayments.length} Pembayaran Tertunda</p>
-                    <p className="text-xs text-gray-500 break-words">
-                      Total: {formatCurrency(pendingPayments.reduce((sum, p) => sum + (p.total_amount || 0), 0))}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Upcoming AC Cleaning - using snake_case */}
-              {upcomingAC.map((ac) => (
-                <div key={ac.id} className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <Wind className="w-4 h-4 text-blue-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900">AC Cleaning Kamar {ac.room_id}</p>
-                    <p className="text-xs text-gray-500">Jadwal: {new Date(ac.next_cleaning_date).toLocaleDateString('id-ID')}</p>
-                  </div>
-                </div>
-              ))}
-
-              {/* Maintenance Requests - using snake_case */}
-              {maintenanceRequests.map((req) => (
-                <div key={req.id} className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
-                    <Wrench className="w-4 h-4 text-orange-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900">Perbaikan: {req.issue_type}</p>
-                    <p className="text-xs text-gray-500">Kamar {req.room_id} - {req.priority}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
+          <CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-lg font-semibold">Tugas Mendatang</CardTitle><Button variant="ghost" size="sm" className="text-[#1A3D5C] shrink-0">Lihat Semua<ArrowRight className="w-4 h-4 ml-1" /></Button></CardHeader>
+          <CardContent><div className="space-y-4">{pendingPayments.length > 0 && (<div className="flex items-start gap-3"><div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0"><AlertCircle className="w-4 h-4 text-red-600" /></div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-gray-900">{pendingPayments.length} Pembayaran Tertunda</p><p className="text-xs text-gray-500 break-words">Total: {formatCurrency(pendingPayments.reduce((sum, p) => sum + (p.total_amount || 0), 0))}</p></div></div>)}{upcomingAC.map((ac) => (<div key={ac.id} className="flex items-start gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0"><Wind className="w-4 h-4 text-blue-600" /></div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-gray-900">AC Cleaning Kamar {ac.room_id}</p><p className="text-xs text-gray-500">Jadwal: {new Date(ac.next_cleaning_date).toLocaleDateString('id-ID')}</p></div></div>))}{maintenanceRequests.map((req) => (<div key={req.id} className="flex items-start gap-3"><div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0"><Wrench className="w-4 h-4 text-orange-600" /></div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-gray-900">Perbaikan: {req.issue_type}</p><p className="text-xs text-gray-500">Kamar {req.room_id} - {req.priority}</p></div></div>))}</div></CardContent>
         </Card>
       </div>
 
-      {/* Quick Actions - fixed navigation */}
-      <Card className="bg-gradient-to-r from-[#1A3D5C] to-[#4A6D8C]">
-        <CardContent className="p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="text-white">
-              <h3 className="text-lg font-semibold">Aksi Cepat</h3>
-              <p className="text-white/70 text-sm">Akses fitur yang sering digunakan</p>
+      {hasAnyCreate && (
+        <Card className="bg-gradient-to-r from-[#1A3D5C] to-[#4A6D8C]">
+          <CardContent className="p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="text-white"><h3 className="text-lg font-semibold">Aksi Cepat</h3><p className="text-white/70 text-sm">Akses fitur yang sering digunakan</p></div>
+              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 w-full sm:w-auto">
+                {canCreateTenant && (<Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleAddTenant}><Plus className="w-4 h-4 mr-2" />Tambah Penghuni</Button>)}
+                {canCreatePayment && (<Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleGoToPayments}><CreditCard className="w-4 h-4 mr-2" />Catat Pembayaran</Button>)}
+                {canCreateExpense && (<Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleGoToExpenses}><Receipt className="w-4 h-4 mr-2" />Catat Pengeluaran</Button>)}
+                {canCreateLaundry && (<Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleGoToLaundry}><Shirt className="w-4 h-4 mr-2" />Input Laundry</Button>)}
+              </div>
             </div>
-            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 w-full sm:w-auto">
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleAddTenant}>
-                <Plus className="w-4 h-4 mr-2" />
-                Tambah Penghuni
-              </Button>
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleGoToPayments}>
-                <CreditCard className="w-4 h-4 mr-2" />
-                Catat Pembayaran
-              </Button>
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleGoToExpenses}>
-                <Receipt className="w-4 h-4 mr-2" />
-                Catat Pengeluaran
-              </Button>
-              <Button variant="secondary" className="bg-white/10 text-white hover:bg-white/20 border-0 h-11 sm:h-10 w-full sm:w-auto justify-start" onClick={handleGoToLaundry}>
-                <Shirt className="w-4 h-4 mr-2" />
-                Input Laundry
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
 
-// Stat Card Component
-interface StatCardProps {
-  title: string;
-  value: string;
-  subtitle: string;
-  icon: React.ElementType;
-  trend: 'up' | 'down' | 'neutral';
-  trendValue: string;
-  color: 'blue' | 'green' | 'gold' | 'purple' | 'red';
-}
-
+interface StatCardProps { title: string; value: string; subtitle: string; icon: React.ElementType; trend: 'up' | 'down' | 'neutral'; trendValue: string; color: 'blue' | 'green' | 'gold' | 'purple' | 'red'; }
 function StatCard({ title, value, subtitle, icon: Icon, trend, trendValue, color }: StatCardProps) {
-  const colorClasses = {
-    blue: 'bg-blue-50 text-blue-600',
-    green: 'bg-green-50 text-green-600',
-    gold: 'bg-amber-50 text-amber-600',
-    purple: 'bg-purple-50 text-purple-600',
-    red: 'bg-red-50 text-red-600',
-  };
-
-  const trendColors = {
-    up: 'text-green-600',
-    down: 'text-red-600',
-    neutral: 'text-gray-500',
-  };
-
+  const colorClasses = { blue: 'bg-blue-50 text-blue-600', green: 'bg-green-50 text-green-600', gold: 'bg-amber-50 text-amber-600', purple: 'bg-purple-50 text-purple-600', red: 'bg-red-50 text-red-600', };
+  const trendColors = { up: 'text-green-600', down: 'text-red-600', neutral: 'text-gray-500', };
   const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : () => <span className="w-4 h-4">-</span>;
-
-  return (
-    <Card className="hover:shadow-lg transition-shadow">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-2">
-          <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0", colorClasses[color])}>
-            <Icon className="w-6 h-6" />
-          </div>
-          <div className={cn("flex items-center gap-1 text-xs font-medium", trendColors[trend])}>
-            <TrendIcon className="w-3 h-3" />
-            {trendValue}
-          </div>
-        </div>
-        <div className="mt-4">
-          <p className="text-sm text-gray-500">{title}</p>
-          <p className="text-2xl font-bold text-gray-900 mt-1 break-words">{value}</p>
-          <p className="text-xs text-gray-400 mt-1">{subtitle}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return (<Card className="hover:shadow-lg transition-shadow"><CardContent className="p-5"><div className="flex items-start justify-between gap-2"><div className={cn("w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0", colorClasses[color])}><Icon className="w-6 h-6" /></div><div className={cn("flex items-center gap-1 text-xs font-medium", trendColors[trend])}><TrendIcon className="w-3 h-3" />{trendValue}</div></div><div className="mt-4"><p className="text-sm text-gray-500">{title}</p><p className="text-2xl font-bold text-gray-900 mt-1 break-words">{value}</p><p className="text-xs text-gray-400 mt-1">{subtitle}</p></div></CardContent></Card>);
 }

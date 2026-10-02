@@ -1,4 +1,4 @@
-// app/src/pages/Payments.tsx - FOCUS FIX - FormContent outside
+// app/src/pages/Payments.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like, zero mutation for owner)
 import { useState, useEffect } from 'react';
 import { Plus, Search, CreditCard, CheckCircle, AlertCircle, Clock, QrCode, Download, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,8 +15,8 @@ import type { Payment, Tenant, Room, Property } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate, getPaymentStatusColor, getPaymentStatusLabel } from '@/lib/format';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { usePermissions } from '@/hooks/usePermissions';
 
-// FIX: stable form outside - no recreation on keystroke
 function PaymentFormContent({ formData, setFormData, properties, rooms, tenants, onPropertyChange, onTenantChange }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[]; tenants: Tenant[]; onPropertyChange: (id: string)=>void; onTenantChange: (id: string)=>void; }) {
   const filteredTenants = tenants.filter(t => t && t.status === 'active' && (formData.property_id? t.property_id === formData.property_id : true));
 
@@ -56,6 +56,7 @@ function PaymentFormContent({ formData, setFormData, properties, rooms, tenants,
 
 export function Payments() {
   const isMobile = useIsMobile();
+  const { can } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [activeTab, setActiveTab] = useState('all');
@@ -69,6 +70,10 @@ export function Payments() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const canCreate = can('payments.create');
+  const canUpdate = can('payments.update');
+  const canDelete = can('payments.delete');
 
   const formatPaymentPeriod = (period: string | undefined): string => {
     if (!period) return '-';
@@ -172,7 +177,7 @@ export function Payments() {
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Pembayaran</h1><p className="text-sm sm:text-base text-gray-500">Kelola pembayaran sewa dan tagihan</p></div>
-        <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => { resetForm(); setIsAddDialogOpen(true); }} disabled={isLoading}><Plus className="w-4 h-4 mr-2" />Buat Tagihan</Button>
+        {canCreate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => { resetForm(); setIsAddDialogOpen(true); }} disabled={isLoading}><Plus className="w-4 h-4 mr-2" />Buat Tagihan</Button>)}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full">
@@ -200,7 +205,7 @@ export function Payments() {
               <div className="grid grid-cols-1 gap-3 sm:hidden w-full">{filteredPayments.map((payment) => { if (!payment) return null; const tenant = tenants.find(t => t && t.id === payment.tenant_id); const room = rooms.find(r => r && r.id === payment.room_id); const property = properties.find(p => p && p.id === payment.property_id); return (<Card key={payment.id} className="w-full overflow-hidden cursor-pointer active:bg-gray-50" onClick={() => setSelectedPayment(payment)}><CardContent className="p-4"><div className="flex justify-between items-start gap-2"><div className="min-w-0 flex-1"><p className="font-semibold text-gray-900 truncate">{tenant?.full_name || 'Unknown'}</p><p className="text-xs text-gray-500 truncate mt-0.5">{room?.room_number || '-'} • {property?.name || '-'} • {formatPaymentPeriod(payment.payment_period)}</p></div><Badge className={cn("text-white shrink-0 text-xs", getPaymentStatusColor(payment.payment_status))}>{getPaymentStatusLabel(payment.payment_status)}</Badge></div><div className="mt-3 flex justify-between items-end"><div><p className="text-xs text-gray-500">Total</p><p className="font-bold text-gray-900">{formatCurrency(Number(payment.total_amount) || 0)}</p><p className="text-xs text-gray-500 mt-1">Jatuh tempo {formatDate(payment.due_date)}</p></div><div className="flex items-center gap-1 text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded-full">{payment.payment_method === 'qris' && <QrCode className="w-3 h-3" />}{payment.payment_method === 'bank_transfer' && <CreditCard className="w-3 h-3" />}<span>{payment.payment_method === 'qris'? 'QRIS' : payment.payment_method === 'bank_transfer'? 'Transfer' : 'Tunai'}</span></div></div></CardContent></Card>); })}</div>
             </>
           )}
-          {!isLoading && filteredPayments.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada pembayaran ditemukan sesuai filter</p><Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => { resetForm(); setIsAddDialogOpen(true); }}><Plus className="w-4 h-4 mr-2" />Buat Tagihan</Button></div>)}
+          {!isLoading && filteredPayments.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada pembayaran ditemukan sesuai filter</p>{canCreate && (<Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => { resetForm(); setIsAddDialogOpen(true); }}><Plus className="w-4 h-4 mr-2" />Buat Tagihan</Button>)}</div>)}
         </TabsContent>
       </Tabs>
 
@@ -219,12 +224,12 @@ export function Payments() {
       {isMobile? (
         <Sheet open={!!selectedPayment &&!isDeleteDialogOpen} onOpenChange={() => setSelectedPayment(null)}>
           <SheetContent side="bottom" className="h-[85vh] w-full p-0 flex flex-col bg-white">
-            {selectedPayment && (() => { const tenant = tenants.find(t => t && t.id === selectedPayment.tenant_id); const room = rooms.find(r => r && r.id === selectedPayment.room_id); return (<><SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle>Detail Pembayaran</SheetTitle><SheetDescription>Informasi lengkap pembayaran</SheetDescription></SheetHeader><div className="flex-1 overflow-y-auto p-4 space-y-4 pb-[env(safe-area-inset-bottom)]"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl"><div className="min-w-0 flex-1"><p className="text-xs text-gray-500">Total Tagihan</p><p className="text-xl font-bold text-gray-900 truncate">{formatCurrency(Number(selectedPayment.total_amount) || 0)}</p></div><Badge className={cn("text-white text-xs px-3 py-1 shrink-0 ml-2", getPaymentStatusColor(selectedPayment.payment_status))}>{getPaymentStatusLabel(selectedPayment.payment_status)}</Badge></div><div className="space-y-3 text-sm"><div className="flex justify-between gap-2"><span className="text-gray-500 shrink-0">Penghuni</span><span className="font-medium truncate">{tenant?.full_name || '-'}</span></div><div className="flex justify-between gap-2"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number || '-'}</span></div><div className="flex justify-between gap-2"><span className="text-gray-500">Periode</span><span className="font-medium">{formatPaymentPeriod(selectedPayment.payment_period)}</span></div></div></div><div className="p-4 border-t grid grid-cols-2 gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button variant="outline" className="h-11" onClick={() => setSelectedPayment(null)}>Tutup</Button>{selectedPayment.payment_status === 'pending'? (<Button className="bg-green-600 hover:bg-green-700 h-11" onClick={handleMarkPaid}><CheckCircle className="w-4 h-4 mr-2" />Lunas</Button>) : (<Button variant="outline" className="text-red-600 h-11" onClick={openDeleteDialog}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}</div></>); })()}
+            {selectedPayment && (() => { const tenant = tenants.find(t => t && t.id === selectedPayment.tenant_id); const room = rooms.find(r => r && r.id === selectedPayment.room_id); return (<><SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle>Detail Pembayaran</SheetTitle><SheetDescription>Informasi lengkap pembayaran</SheetDescription></SheetHeader><div className="flex-1 overflow-y-auto p-4 space-y-4 pb-[env(safe-area-inset-bottom)]"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl"><div className="min-w-0 flex-1"><p className="text-xs text-gray-500">Total Tagihan</p><p className="text-xl font-bold text-gray-900 truncate">{formatCurrency(Number(selectedPayment.total_amount) || 0)}</p></div><Badge className={cn("text-white text-xs px-3 py-1 shrink-0 ml-2", getPaymentStatusColor(selectedPayment.payment_status))}>{getPaymentStatusLabel(selectedPayment.payment_status)}</Badge></div><div className="space-y-3 text-sm"><div className="flex justify-between gap-2"><span className="text-gray-500 shrink-0">Penghuni</span><span className="font-medium truncate">{tenant?.full_name || '-'}</span></div><div className="flex justify-between gap-2"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number || '-'}</span></div><div className="flex justify-between gap-2"><span className="text-gray-500">Periode</span><span className="font-medium">{formatPaymentPeriod(selectedPayment.payment_period)}</span></div></div></div><div className="p-4 border-t grid grid-cols-2 gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button variant="outline" className="h-11" onClick={() => setSelectedPayment(null)}>Tutup</Button>{selectedPayment.payment_status === 'pending'? (canUpdate ? (<Button className="bg-green-600 hover:bg-green-700 h-11" onClick={handleMarkPaid}><CheckCircle className="w-4 h-4 mr-2" />Lunas</Button>) : (<div className="h-11 flex items-center justify-center text-xs text-gray-400">Read-only</div>)) : (canDelete ? (<Button variant="outline" className="text-red-600 h-11" onClick={openDeleteDialog}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>) : (<div className="h-11 flex items-center justify-center text-xs text-gray-400">Read-only</div>))}</div></>); })()}
           </SheetContent>
         </Sheet>
       ) : (
         <Dialog open={!!selectedPayment &&!isDeleteDialogOpen} onOpenChange={() => setSelectedPayment(null)}>
-          <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Detail Pembayaran</DialogTitle><DialogDescription>Informasi lengkap pembayaran</DialogDescription></DialogHeader>{selectedPayment && (() => { const tenant = tenants.find(t => t && t.id === selectedPayment.tenant_id); const room = rooms.find(r => r && r.id === selectedPayment.room_id); return (<><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Total Tagihan</p><p className="text-2xl font-bold text-gray-900">{formatCurrency(Number(selectedPayment.total_amount) || 0)}</p></div><Badge className={cn("text-white text-sm px-3 py-1", getPaymentStatusColor(selectedPayment.payment_status))}>{getPaymentStatusLabel(selectedPayment.payment_status)}</Badge></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedPayment(null)}>Tutup</Button><Button variant="outline" className="text-red-600" onClick={openDeleteDialog}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>{selectedPayment.payment_status === 'pending' && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleMarkPaid}><CheckCircle className="w-4 h-4 mr-2" />Tandai Lunas</Button>)}</DialogFooter></>); })()}</DialogContent>
+          <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Detail Pembayaran</DialogTitle><DialogDescription>Informasi lengkap pembayaran</DialogDescription></DialogHeader>{selectedPayment && (() => { const tenant = tenants.find(t => t && t.id === selectedPayment.tenant_id); const room = rooms.find(r => r && r.id === selectedPayment.room_id); return (<><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Total Tagihan</p><p className="text-2xl font-bold text-gray-900">{formatCurrency(Number(selectedPayment.total_amount) || 0)}</p></div><Badge className={cn("text-white text-sm px-3 py-1", getPaymentStatusColor(selectedPayment.payment_status))}>{getPaymentStatusLabel(selectedPayment.payment_status)}</Badge></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedPayment(null)}>Tutup</Button>{canDelete && (<Button variant="outline" className="text-red-600" onClick={openDeleteDialog}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}{selectedPayment.payment_status === 'pending' && canUpdate && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleMarkPaid}><CheckCircle className="w-4 h-4 mr-2" />Tandai Lunas</Button>)}</DialogFooter></>); })()}</DialogContent>
         </Dialog>
       )}
 

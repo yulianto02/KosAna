@@ -1,4 +1,4 @@
-// app/src/pages/Laundry.tsx - Step 5 fixed: allSettled + property fallback + permission buttons
+// app/src/pages/Laundry.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like)
 import { useState, useEffect } from 'react';
 import { Plus, Search, Shirt, CheckCircle, Clock, Scale, Download, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,14 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { getUserFromToken } from '@/services/auth';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { laundryAPI, tenantsAPI, roomsAPI, propertiesAPI } from '@/services/api';
 import type { LaundryOrder, Tenant, Room, Property } from '@/types';
@@ -43,21 +36,18 @@ export function Laundry() {
   const [selectedMonth, setSelectedMonth] = useState<string>((currentDate.getMonth() + 1).toString().padStart(2, '0'));
   const [selectedYear, setSelectedYear] = useState<string>(currentDate.getFullYear().toString());
 
+  const canCreate = can('laundry.create');
+  const canComplete = can('laundry.complete') || can('laundry.create');
+  const canDelete = can('laundry.delete');
+
   const [formData, setFormData] = useState({
-    tenant_id: '',
-    property_id: '',
-    room_id: '',
+    tenant_id: '', property_id: '', room_id: '',
     service_type: 'wash_and_iron' as 'wash_fold' | 'wash_and_iron' | 'iron_only' | 'other',
-    weight_kg: 0,
-    item_count: 0,
-    price_per_kg: 8000,
-    total_price: 0,
-    notes: '',
+    weight_kg: 0, item_count: 0, price_per_kg: 8000, total_price: 0, notes: '',
   });
 
   useEffect(() => { fetchData(); }, []);
   useEffect(() => {
-    // Auto-select Kebayoran Lama if only 1 property
     if (properties.length === 1 && !formData.property_id) {
       setFormData(prev => ({ ...prev, property_id: properties[0].id }));
     } else if (properties.length === 0 && propertyScopes.length === 1 && !formData.property_id) {
@@ -83,9 +73,8 @@ export function Laundry() {
       setTenants(tenantsRes as any);
       setRooms(roomsRes as any);
       setProperties(propsRes as any);
-    } catch (error) {
-      toast.error('Gagal memuat data');
-    } finally { setIsLoading(false); }
+    } catch (error) { toast.error('Gagal memuat data'); }
+    finally { setIsLoading(false); }
   };
 
   const filteredOrders = laundryOrders.filter(order => {
@@ -109,25 +98,14 @@ export function Laundry() {
   const completedToday = laundryOrders.filter(o => o.status === 'completed' && o.completion_date && new Date(o.completion_date).toDateString() === new Date().toDateString()).length;
 
   const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'pending': return 'Dalam Antrian';
-      case 'in_progress': return 'Diproses';
-      case 'completed': return 'Selesai';
-      default: return status;
-    }
+    switch (status) { case 'pending': return 'Dalam Antrian'; case 'in_progress': return 'Diproses'; case 'completed': return 'Selesai'; default: return status; }
   };
   const getServiceTypeLabel = (serviceType: string) => {
-    switch (serviceType) {
-      case 'wash_fold': return 'Cuci & Lipat';
-      case 'wash_and_iron': return 'Cuci & Setrika';
-      case 'iron_only': return 'Setrika Saja';
-      case 'other': return 'Lain-lain';
-      default: return serviceType;
-    }
+    switch (serviceType) { case 'wash_fold': return 'Cuci & Lipat'; case 'wash_and_iron': return 'Cuci & Setrika'; case 'iron_only': return 'Setrika Saja'; case 'other': return 'Lain-lain'; default: return serviceType; }
   };
 
   const handleStartProcessing = async (id: string) => {
-    if (!can('laundry.create') && !can('laundry.complete')) { toast.error('Tidak ada izin'); return; }
+    if (!canComplete) { toast.error('Tidak ada izin'); return; }
     try { await laundryAPI.update(id, { status: 'in_progress' }); toast.success('Pesanan mulai diproses'); fetchData(); }
     catch { toast.error('Gagal memulai proses'); }
   };
@@ -140,21 +118,16 @@ export function Laundry() {
   };
   const handleDelete = async () => {
     if (!selectedOrder) return;
-    if (!can('laundry.delete') && !can('laundry.create')) { toast.error('Tidak ada izin hapus'); return; }
+    if (!canDelete) { toast.error('Tidak ada izin hapus'); return; }
     try { await laundryAPI.delete(selectedOrder.id); toast.success('Pesanan laundry berhasil dihapus'); setIsDeleteDialogOpen(false); setSelectedOrder(null); fetchData(); }
     catch { toast.error('Gagal menghapus pesanan'); }
   };
-  const handlePropertyChange = (property_id: string) => {
-    setFormData({ ...formData, property_id, tenant_id: '', room_id: '' });
-  };
+  const handlePropertyChange = (property_id: string) => { setFormData({ ...formData, property_id, tenant_id: '', room_id: '' }); };
   const handleTenantChange = (tenant_id: string) => {
     const tenant = tenants.find(t => t.id === tenant_id);
     if (tenant) setFormData({ ...formData, tenant_id, property_id: tenant.property_id, room_id: tenant.room_id });
   };
-  useEffect(() => {
-    const total_price = formData.weight_kg > 0 ? formData.weight_kg * formData.price_per_kg : 0;
-    setFormData(prev => ({ ...prev, total_price }));
-  }, [formData.weight_kg, formData.price_per_kg]);
+  useEffect(() => { const total_price = formData.weight_kg > 0 ? formData.weight_kg * formData.price_per_kg : 0; setFormData(prev => ({ ...prev, total_price })); }, [formData.weight_kg, formData.price_per_kg]);
   const getCurrentUserId = (): string | null => { const user = getUserFromToken(); return user?.id || null; };
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,21 +140,17 @@ export function Laundry() {
     const order_date = new Date().toISOString().split('T')[0];
     try {
       await laundryAPI.create({ ...formData, total_price, order_date, recorded_by });
-      toast.success('Pesanan laundry berhasil ditambahkan');
-      setIsAddDialogOpen(false);
-      setFormData({ tenant_id: '', property_id: properties[0]?.id || accessiblePropertyIds[0] || '', room_id: '', service_type: 'wash_and_iron', weight_kg: 0, item_count: 0, price_per_kg: 8000, total_price: 0, notes: '' });
-      fetchData();
+      toast.success('Pesanan laundry berhasil ditambahkan'); setIsAddDialogOpen(false);
+      setFormData({ tenant_id: '', property_id: properties[0]?.id || accessiblePropertyIds[0] || '', room_id: '', service_type: 'wash_and_iron', weight_kg: 0, item_count: 0, price_per_kg: 8000, total_price: 0, notes: '' }); fetchData();
     } catch (error) { console.error(error); toast.error('Gagal menambahkan pesanan'); }
   };
   const filteredTenants = formData.property_id ? tenants.filter(t => t.property_id === formData.property_id && t.status === 'active') : tenants.filter(t => t.status === 'active');
-  const canCreate = can('laundry.create');
-  const canComplete = can('laundry.complete') || can('laundry.create');
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold text-gray-900">Manajemen Laundry</h1><p className="text-gray-500">Kelola pesanan laundry penghuni</p></div>
-        {canCreate && <Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Pesanan</Button>}
+        {canCreate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Pesanan</Button>)}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -222,7 +191,7 @@ export function Laundry() {
               })}</tbody>
             </table></div></Card>
           )}
-          {!isLoading && filteredOrders.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg"><p className="text-gray-500">Tidak ada pesanan laundry</p>{canCreate && <Button variant="outline" className="mt-4" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Pesanan</Button>}</div>)}
+          {!isLoading && filteredOrders.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg"><p className="text-gray-500">Tidak ada pesanan laundry</p>{canCreate && (<Button variant="outline" className="mt-4" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Tambah Pesanan</Button>)}</div>)}
         </TabsContent>
       </Tabs>
 
@@ -248,7 +217,7 @@ export function Laundry() {
         <DialogContent className="max-w-lg">{selectedOrder && (() => {
           const tenant = tenants.find(t => t.id === selectedOrder.tenant_id);
           const room = rooms.find(r => r.id === selectedOrder.room_id);
-          return (<><DialogHeader><DialogTitle>Detail Pesanan Laundry</DialogTitle></DialogHeader><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Total Harga</p><p className="text-2xl font-bold">{formatCurrency(selectedOrder.total_price)}</p></div><Badge className={cn(selectedOrder.status === 'completed' && "bg-green-100 text-green-700")}>{getStatusLabel(selectedOrder.status)}</Badge></div><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-500">Penghuni</span><span className="font-medium">{tenant?.full_name}</span></div><div className="flex justify-between"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number}</span></div><div className="flex justify-between"><span className="text-gray-500">Tanggal</span><span>{formatDate(selectedOrder.order_date)}</span></div></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedOrder(null)}>Tutup</Button>{can('laundry.delete') && <Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}{selectedOrder.status !== 'completed' && canComplete && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>)}</DialogFooter></>);
+          return (<><DialogHeader><DialogTitle>Detail Pesanan Laundry</DialogTitle></DialogHeader><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Total Harga</p><p className="text-2xl font-bold">{formatCurrency(selectedOrder.total_price)}</p></div><Badge className={cn(selectedOrder.status === 'completed' && "bg-green-100 text-green-700")}>{getStatusLabel(selectedOrder.status)}</Badge></div><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-500">Penghuni</span><span className="font-medium">{tenant?.full_name}</span></div><div className="flex justify-between"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number}</span></div><div className="flex justify-between"><span className="text-gray-500">Tanggal</span><span>{formatDate(selectedOrder.order_date)}</span></div></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedOrder(null)}>Tutup</Button>{canDelete && (<Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}{selectedOrder.status !== 'completed' && canComplete && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>)}</DialogFooter></>);
         })()}</DialogContent>
       </Dialog>
     </div>

@@ -1,4 +1,4 @@
-// app/src/pages/Maintenance.tsx - FOCUS FIX + backend compatible
+// app/src/pages/Maintenance.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like)
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, CheckCircle, Clock, AlertCircle, Trash2, CalendarIcon } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,44 +19,21 @@ import { formatCurrency, formatDate, getIssueTypeLabel, getPriorityLabel, getPri
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const INDONESIAN_MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 
-// FIX: stable form outside component
 function AddMaintenanceForm({ formData, setFormData, properties, rooms }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[] }) {
   return (
     <div className="space-y-4">
       <div className="space-y-2"><Label className="text-sm">Tanggal Request *</Label>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className={cn("w-full justify-start text-left font-normal h-11 text-base sm:h-10 sm:text-sm", !formData.requestDate && "text-muted-foreground")}>
-              <CalendarIcon className="mr-2 h-4 w-4" />{formData.requestDate? format(formData.requestDate, "PPP", { locale: id }) : <span>Pilih tanggal</span>}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={formData.requestDate} onSelect={(date) => date && setFormData((p:any)=>({...p, requestDate: date}))} initialFocus className="p-3 [&_.rdp-cell]:w-10 [&_.rdp-cell]:h-10" /></PopoverContent>
-        </Popover>
+        <Popover><PopoverTrigger asChild><Button variant="outline" className={cn("w-full justify-start text-left font-normal h-11 text-base sm:h-10 sm:text-sm", !formData.requestDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{formData.requestDate? format(formData.requestDate, "PPP", { locale: id }) : <span>Pilih tanggal</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={formData.requestDate} onSelect={(date) => date && setFormData((p:any)=>({...p, requestDate: date}))} initialFocus className="p-3 [&_.rdp-cell]:w-10 [&_.rdp-cell]:h-10" /></PopoverContent></Popover>
       </div>
-      <div className="space-y-2"><Label className="text-sm">Properti *</Label>
-        <select value={formData.propertyId} onChange={(e) => setFormData((p:any)=>({...p, propertyId: e.target.value, roomId: ''}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required>
-          <option value="">Pilih Properti</option>{properties.map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
-        </select>
-      </div>
-      <div className="space-y-2"><Label className="text-sm">Kamar *</Label>
-        <select value={formData.roomId} onChange={(e) => setFormData((p:any)=>({...p, roomId: e.target.value}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required disabled={!formData.propertyId}>
-          <option value="">Pilih Kamar</option>{rooms.filter(r => r.property_id === formData.propertyId).map(r => (<option key={r.id} value={r.id}>{r.room_number}</option>))}
-        </select>
-      </div>
+      <div className="space-y-2"><Label className="text-sm">Properti *</Label><select value={formData.propertyId} onChange={(e) => setFormData((p:any)=>({...p, propertyId: e.target.value, roomId: ''}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required><option value="">Pilih Properti</option>{properties.map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}</select></div>
+      <div className="space-y-2"><Label className="text-sm">Kamar *</Label><select value={formData.roomId} onChange={(e) => setFormData((p:any)=>({...p, roomId: e.target.value}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required disabled={!formData.propertyId}><option value="">Pilih Kamar</option>{rooms.filter(r => r.property_id === formData.propertyId).map(r => (<option key={r.id} value={r.id}>{r.room_number}</option>))}</select></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-2"><Label className="text-sm">Jenis Masalah *</Label>
-          <select value={formData.issueType} onChange={(e) => setFormData((p:any)=>({...p, issueType: e.target.value}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required>
-            <option value="ac">AC</option><option value="plumbing">Plumbing</option><option value="electrical">Kelistrikan</option><option value="furniture">Mebel</option><option value="painting">Cat</option><option value="other">Lainnya</option>
-          </select>
-        </div>
-        <div className="space-y-2"><Label className="text-sm">Prioritas *</Label>
-          <select value={formData.priority} onChange={(e) => setFormData((p:any)=>({...p, priority: e.target.value}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required>
-            <option value="low">Rendah</option><option value="medium">Sedang</option><option value="high">Tinggi</option><option value="urgent">Mendesak</option>
-          </select>
-        </div>
+        <div className="space-y-2"><Label className="text-sm">Jenis Masalah *</Label><select value={formData.issueType} onChange={(e) => setFormData((p:any)=>({...p, issueType: e.target.value}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required><option value="ac">AC</option><option value="plumbing">Plumbing</option><option value="electrical">Kelistrikan</option><option value="furniture">Mebel</option><option value="painting">Cat</option><option value="other">Lainnya</option></select></div>
+        <div className="space-y-2"><Label className="text-sm">Prioritas *</Label><select value={formData.priority} onChange={(e) => setFormData((p:any)=>({...p, priority: e.target.value}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" required><option value="low">Rendah</option><option value="medium">Sedang</option><option value="high">Tinggi</option><option value="urgent">Mendesak</option></select></div>
       </div>
       <div className="space-y-2"><Label className="text-sm">Deskripsi Masalah *</Label><textarea value={formData.description} onChange={(e) => setFormData((p:any)=>({...p, description: e.target.value}))} className="w-full px-3 py-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" rows={3} required placeholder="Jelaskan detail masalah..." /></div>
       <div className="space-y-2"><Label className="text-sm">Nama Teknisi</Label><Input value={formData.technicianName} onChange={(e) => setFormData((p:any)=>({...p, technicianName: e.target.value}))} placeholder="Nama teknisi (opsional)" className="h-11 text-base sm:h-10 sm:text-sm" /></div>
@@ -68,6 +45,7 @@ function AddMaintenanceForm({ formData, setFormData, properties, rooms }: { form
 
 export function Maintenance() {
   const isMobile = useIsMobile();
+  const { can } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<MaintenanceRequest | null>(null);
   const [activeTab, setActiveTab] = useState('all');
@@ -79,6 +57,10 @@ export function Maintenance() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedProperty, setSelectedProperty] = useState('all');
   const [selectedMonth, setSelectedMonth] = useState('all');
+
+  const canCreate = can('maintenance.create');
+  const canUpdate = can('maintenance.update');
+  const canDelete = can('maintenance.delete');
 
   const [formData, setFormData] = useState({
     propertyId: '', roomId: '',
@@ -161,7 +143,7 @@ export function Maintenance() {
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Perawatan & Perbaikan</h1><p className="text-sm sm:text-base text-gray-500">Kelola request perawatan dan perbaikan</p></div>
-        <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Buat Request</Button>
+        {canCreate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Buat Request</Button>)}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full">
@@ -222,7 +204,7 @@ export function Maintenance() {
               </div>
             </>
           )}
-          {!isLoading && filteredRequests.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada request perawatan</p><Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Buat Request</Button></div>)}
+          {!isLoading && filteredRequests.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada request perawatan</p>{canCreate && (<Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={() => setIsAddDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Buat Request</Button>)}</div>)}
         </TabsContent>
       </Tabs>
 
@@ -242,7 +224,6 @@ export function Maintenance() {
         </Dialog>
       )}
 
-      {/* Detail & Delete - same as before, omitted for brevity but keep your existing code */}
       {isMobile? (
         <Sheet open={!!selectedRequest &&!isDeleteDialogOpen} onOpenChange={() => setSelectedRequest(null)}>
           <SheetContent side="bottom" className="h-[85vh] w-full p-0 flex flex-col bg-white">
@@ -261,9 +242,9 @@ export function Maintenance() {
                     </div>
                     <div className="bg-gray-50 p-3 rounded-lg"><Label className="text-xs text-gray-500">Deskripsi</Label><p className="mt-1 text-sm break-words">{selectedRequest.description}</p></div>
                   </div>
-                  <div className="p-4 border-t grid grid-cols-2 gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+                  <div className="p-4 border-t grid gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))] grid-cols-2">
                     <Button variant="outline" className="h-11" onClick={() => setSelectedRequest(null)}>Tutup</Button>
-                    {selectedRequest.status!== 'completed'? (<Button className="bg-green-600 hover:bg-green-700 h-11" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>) : (<Button variant="outline" className="text-red-600 h-11" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}
+                    {selectedRequest.status!== 'completed'? (canUpdate ? (<Button className="bg-green-600 hover:bg-green-700 h-11" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>) : (<Button variant="outline" disabled className="h-11">Read-only</Button>)) : (canDelete ? (<Button variant="outline" className="text-red-600 h-11" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>) : (<Button variant="outline" disabled className="h-11">Read-only</Button>))}
                   </div>
                 </>
               );
@@ -275,7 +256,7 @@ export function Maintenance() {
           <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Detail Request Perawatan</DialogTitle><DialogDescription>Informasi lengkap</DialogDescription></DialogHeader>
             {selectedRequest && (() => {
               const room = rooms.find(r => r.id === selectedRequest.room_id);
-              return (<><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Status</p><Badge className={cn("text-sm mt-1", selectedRequest.status === 'completed' && "bg-green-100 text-green-700")}>{selectedRequest.status}</Badge></div><div className="text-right"><p className="text-sm text-gray-500">Prioritas</p><Badge className={cn("text-white mt-1", getPriorityColor(selectedRequest.priority))}>{getPriorityLabel(selectedRequest.priority)}</Badge></div></div><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number}</span></div><div className="flex justify-between"><span className="text-gray-500">Jenis</span><Badge variant="outline">{getIssueTypeLabel(selectedRequest.issue_type)}</Badge></div></div><div><Label className="text-gray-500">Deskripsi</Label><p className="mt-1 text-sm bg-gray-50 p-3 rounded-lg">{selectedRequest.description}</p></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedRequest(null)}>Tutup</Button><Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>{selectedRequest.status!== 'completed' && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>)}</DialogFooter></>);
+              return (<><div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Status</p><Badge className={cn("text-sm mt-1", selectedRequest.status === 'completed' && "bg-green-100 text-green-700")}>{selectedRequest.status}</Badge></div><div className="text-right"><p className="text-sm text-gray-500">Prioritas</p><Badge className={cn("text-white mt-1", getPriorityColor(selectedRequest.priority))}>{getPriorityLabel(selectedRequest.priority)}</Badge></div></div><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-500">Kamar</span><span className="font-medium">{room?.room_number}</span></div><div className="flex justify-between"><span className="text-gray-500">Jenis</span><Badge variant="outline">{getIssueTypeLabel(selectedRequest.issue_type)}</Badge></div></div><div><Label className="text-gray-500">Deskripsi</Label><p className="mt-1 text-sm bg-gray-50 p-3 rounded-lg">{selectedRequest.description}</p></div></div><DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedRequest(null)}>Tutup</Button>{canDelete && (<Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}{selectedRequest.status!== 'completed' && canUpdate && (<Button className="bg-green-600 hover:bg-green-700" onClick={handleComplete}><CheckCircle className="w-4 h-4 mr-2" />Selesai</Button>)}</DialogFooter></>);
             })()}
           </DialogContent>
         </Dialog>

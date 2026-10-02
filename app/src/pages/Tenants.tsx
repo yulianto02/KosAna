@@ -1,4 +1,4 @@
-// app/src/pages/Tenants.tsx - FOCUS FIX + FULL FIELDS
+// app/src/pages/Tenants.tsx - Step 7 Owner Read-Only FINAL (beautiful admin-like, zero mutation for owner matuf)
 import { useState, useEffect, useMemo } from 'react';
 import { Search, Eye, Edit, Trash2, MoreHorizontal, Phone, Mail, UserPlus, Building2, Calendar, Users, LogOut } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -21,7 +21,6 @@ import { formatCurrency, formatDate, getPaymentStatusColor, getPaymentStatusLabe
 import { useIsMobile } from '@/hooks/use-mobile';
 import { usePermissions } from '@/hooks/usePermissions';
 
-// FIX: Stable form outside component - full fields matching \d tenants
 function TenantFormContent({ formData, setFormData, properties, rooms }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[] }) {
   const getAvailableRooms = (propertyId: string) => {
     if (!propertyId) return rooms;
@@ -202,6 +201,7 @@ export function Tenants() {
 
   const canCreate = can('tenants.create');
   const canUpdate = can('tenants.update');
+  const canDelete = can('tenants.delete');
 
   return (
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
@@ -243,7 +243,7 @@ export function Tenants() {
               <thead className="bg-gray-50 border-b"><tr><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Penghuni</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kamar</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kontak</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Sewa/Bulan</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Status</th><th className="px-4 py-3 text-right text-sm font-medium text-gray-500">Aksi</th></tr></thead>
               <tbody className="divide-y">{filteredTenants.map((tenant) => {
                 const room = getRoomInfo(tenant.room_id); const property = getPropertyInfo(tenant.property_id);
-                return (<tr key={tenant.id} className="hover:bg-gray-50"><td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar className="w-10 h-10"><AvatarFallback className="bg-[#1A3D5C] text-white">{tenant.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2)}</AvatarFallback></Avatar><div><p className="font-medium text-gray-900">{tenant.full_name}</p>{tenant.is_shared_room && tenant.secondary_tenant_name && (<p className="text-xs text-gray-500">+ {tenant.secondary_tenant_name}</p>)}</div></div></td><td className="px-4 py-3"><p className="font-medium">{room?.room_number || tenant.room_id?.slice(0,8) || '-'}</p><p className="text-xs text-gray-500">{property?.name || tenant.property_id?.slice(0,8) || '-'}</p></td><td className="px-4 py-3"><div className="space-y-1"><div className="flex items-center gap-1 text-sm"><Phone className="w-3 h-3 text-gray-400" />{tenant.phone}</div></div></td><td className="px-4 py-3"><p className="font-medium">{formatCurrency(tenant.total_monthly_rent)}</p><p className="text-xs text-gray-500">Jatuh tempo: tgl {tenant.payment_due_day}</p></td><td className="px-4 py-3"><Badge className={cn(tenant.status === 'active' && "bg-green-100 text-green-700", tenant.status === 'archived' && "bg-gray-100 text-gray-700", tenant.status === 'moved_out' && "bg-orange-100 text-orange-700")}>{tenant.status === 'active'? 'Aktif' : tenant.status === 'archived'? 'Arsip' : 'Keluar'}</Badge></td><td className="px-4 py-3 text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setSelectedTenant(tenant)}><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>{canUpdate && <DropdownMenuItem onClick={() => openEditDialog(tenant)}><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>}{tenant.status === 'active' && canUpdate && (<DropdownMenuItem className="text-orange-600" onClick={() => openCheckOutDialog(tenant)}><LogOut className="w-4 h-4 mr-2" />Check Out</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></td></tr>);
+                return (<tr key={tenant.id} className="hover:bg-gray-50"><td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar className="w-10 h-10"><AvatarFallback className="bg-[#1A3D5C] text-white">{tenant.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2)}</AvatarFallback></Avatar><div><p className="font-medium text-gray-900">{tenant.full_name}</p>{tenant.is_shared_room && tenant.secondary_tenant_name && (<p className="text-xs text-gray-500">+ {tenant.secondary_tenant_name}</p>)}</div></div></td><td className="px-4 py-3"><p className="font-medium">{room?.room_number || tenant.room_id?.slice(0,8) || '-'}</p><p className="text-xs text-gray-500">{property?.name || tenant.property_id?.slice(0,8) || '-'}</p></td><td className="px-4 py-3"><div className="space-y-1"><div className="flex items-center gap-1 text-sm"><Phone className="w-3 h-3 text-gray-400" />{tenant.phone}</div></div></td><td className="px-4 py-3"><p className="font-medium">{formatCurrency(tenant.total_monthly_rent)}</p><p className="text-xs text-gray-500">Jatuh tempo: tgl {tenant.payment_due_day}</p></td><td className="px-4 py-3"><Badge className={cn(tenant.status === 'active' && "bg-green-100 text-green-700", tenant.status === 'archived' && "bg-gray-100 text-gray-700", tenant.status === 'moved_out' && "bg-orange-100 text-orange-700")}>{tenant.status === 'active'? 'Aktif' : tenant.status === 'archived'? 'Arsip' : 'Keluar'}</Badge></td><td className="px-4 py-3 text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setSelectedTenant(tenant)}><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>{canUpdate && <DropdownMenuItem onClick={() => openEditDialog(tenant)}><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>}{tenant.status === 'active' && canUpdate && (<DropdownMenuItem className="text-orange-600" onClick={() => openCheckOutDialog(tenant)}><LogOut className="w-4 h-4 mr-2" />Check Out</DropdownMenuItem>)}{canDelete && <DropdownMenuItem className="text-red-600" onClick={() => openDeleteDialog(tenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></td></tr>);
               })}</tbody>
             </table></div>
           </Card>
@@ -260,7 +260,7 @@ export function Tenants() {
                         <div className="flex items-start justify-between gap-2"><div className="min-w-0 flex-1"><p className="font-semibold text-gray-900 truncate">{tenant.full_name}</p><p className="text-xs text-gray-500 truncate">{room?.room_number || '-'} • {property?.name || '-'}</p></div><Badge className={cn("shrink-0 text-xs", tenant.status === 'active' && "bg-green-100 text-green-700", tenant.status === 'archived' && "bg-gray-100 text-gray-700", tenant.status === 'moved_out' && "bg-orange-100 text-orange-700")}>{tenant.status === 'active'? 'Aktif' : 'Arsip'}</Badge></div>
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600"><span className="flex items-center gap-1"><Phone className="w-3 h-3" />{tenant.phone}</span><span className="font-medium">{formatCurrency(tenant.total_monthly_rent)}</span></div>
                       </div>
-                      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-11 w-11 shrink-0 -mr-2"><MoreHorizontal className="w-5 h-5" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setSelectedTenant(tenant)} className="h-11"><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>{canUpdate && <DropdownMenuItem onClick={() => openEditDialog(tenant)} className="h-11"><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>}{tenant.status === 'active' && canUpdate && (<DropdownMenuItem className="text-orange-600 h-11" onClick={() => openCheckOutDialog(tenant)}><LogOut className="w-4 h-4 mr-2" />Check Out</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>
+                      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-11 w-11 shrink-0 -mr-2"><MoreHorizontal className="w-5 h-5" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setSelectedTenant(tenant)} className="h-11"><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>{canUpdate && <DropdownMenuItem onClick={() => openEditDialog(tenant)} className="h-11"><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>}{tenant.status === 'active' && canUpdate && (<DropdownMenuItem className="text-orange-600 h-11" onClick={() => openCheckOutDialog(tenant)}><LogOut className="w-4 h-4 mr-2" />Check Out</DropdownMenuItem>)}{canDelete && <DropdownMenuItem className="text-red-600 h-11" onClick={() => openDeleteDialog(tenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
                     </div>
                   </CardContent>
                 </Card>
@@ -272,7 +272,6 @@ export function Tenants() {
 
       {!isLoading && filteredTenants.length === 0 && (<div className="text-center py-12 bg-gray-50 rounded-lg px-4"><p className="text-gray-500">Tidak ada penghuni ditemukan (properti: {properties.length}, kamar: {rooms.length})</p>{canCreate && <Button variant="outline" className="mt-4 h-11 w-full sm:w-auto" onClick={openAddDialog}><UserPlus className="w-4 h-4 mr-2" />Tambah Penghuni</Button>}</div>)}
 
-      {/* Add/Edit - both mobile and desktop use same full form */}
       {isMobile? (
         <Sheet open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
           <SheetContent side="bottom" className="h-[92vh] w-full p-0 flex flex-col bg-white">
@@ -291,7 +290,6 @@ export function Tenants() {
         </Dialog>
       )}
 
-      {/* Detail Dialog */}
       {isMobile? (
         <Sheet open={!!selectedTenant && !isAddDialogOpen && !isDeleteDialogOpen && !isCheckOutDialogOpen} onOpenChange={() => setSelectedTenant(null)}>
           <SheetContent side="bottom" className="h-[85vh] w-full p-0 flex flex-col bg-white">
@@ -310,17 +308,15 @@ export function Tenants() {
       ) : (
         <Dialog open={!!selectedTenant && !isAddDialogOpen && !isDeleteDialogOpen && !isCheckOutDialogOpen} onOpenChange={() => setSelectedTenant(null)}>
           <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{selectedTenant?.full_name}</DialogTitle><DialogDescription>Detail lengkap penghuni</DialogDescription></DialogHeader>
-            {selectedTenant && (<div className="space-y-4"><div className="space-y-2 text-sm"><p><span className="text-gray-500">Telepon:</span> {selectedTenant.phone}</p><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p><p><span className="text-gray-500">Sewa:</span> {formatCurrency(selectedTenant.total_monthly_rent)}</p></div><DialogFooter><Button variant="outline" onClick={()=>setSelectedTenant(null)}>Tutup</Button>{canUpdate && <Button className="bg-[#1A3D5C]" onClick={()=>openEditDialog(selectedTenant)}><Edit className="w-4 h-4 mr-2" />Edit</Button>}</DialogFooter></div>)}
+            {selectedTenant && (<div className="space-y-4"><div className="space-y-2 text-sm"><p><span className="text-gray-500">Telepon:</span> {selectedTenant.phone}</p><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p><p><span className="text-gray-500">Sewa:</span> {formatCurrency(selectedTenant.total_monthly_rent)}</p></div><DialogFooter><Button variant="outline" onClick={()=>setSelectedTenant(null)}>Tutup</Button>{canUpdate && <Button className="bg-[#1A3D5C]" onClick={()=>openEditDialog(selectedTenant)}><Edit className="w-4 h-4 mr-2" />Edit</Button>}{canDelete && <Button variant="destructive" onClick={()=>openDeleteDialog(selectedTenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}</DialogFooter></div>)}
           </DialogContent>
         </Dialog>
       )}
 
-      {/* CheckOut */}
       <Dialog open={isCheckOutDialogOpen} onOpenChange={setIsCheckOutDialogOpen}>
         <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Check Out Penghuni</DialogTitle><DialogDescription>Masukkan alasan check out untuk {selectedTenant?.full_name}</DialogDescription></DialogHeader><div className="space-y-4"><Label>Alasan Check Out</Label><textarea value={checkOutReason} onChange={(e)=>setCheckOutReason(e.target.value)} className="w-full border rounded-lg p-3 h-24" placeholder="Alasan keluar..." /></div><DialogFooter><Button variant="outline" onClick={()=>setIsCheckOutDialogOpen(false)}>Batal</Button><Button variant="destructive" onClick={handleCheckOut}>Check Out</Button></DialogFooter></DialogContent>
       </Dialog>
 
-      {/* Delete */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Konfirmasi Hapus</DialogTitle><DialogDescription>Yakin hapus penghuni {selectedTenant?.full_name}?</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={()=>setIsDeleteDialogOpen(false)}>Batal</Button><Button variant="destructive" onClick={handleDelete}>Hapus</Button></DialogFooter></DialogContent>
       </Dialog>

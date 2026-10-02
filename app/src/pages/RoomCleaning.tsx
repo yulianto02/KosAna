@@ -1,4 +1,4 @@
-// app/src/pages/RoomCleaning.tsx - FOCUS FIX + backend 500 fix compatible
+// app/src/pages/RoomCleaning.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like)
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckCircle2, Clock, AlertCircle, RotateCcw, User, MoreHorizontal, Sparkles, Trash2, PlayCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -35,7 +35,6 @@ const STATUS_CONFIG = {
   rescheduled: { label: 'Diubah', color: 'bg-[#C9A227]/20 text-[#5D4037] border-[#C9A227]', icon: RotateCcw, bgColor: 'bg-[#C9A227]/10' }
 };
 
-// FIX: Stable form outside - prevents 1-char typing bug
 function RoomCleaningFormContent({ formData, setFormData, rooms, cleaners, getAvailableRooms }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; rooms: Room[]; cleaners: UserType[]; getAvailableRooms: ()=>Room[] }) {
   return (
     <div className="space-y-4">
@@ -93,6 +92,10 @@ export function RoomCleaning() {
   const [selectedSchedule, setSelectedSchedule] = useState<RoomCleaningSchedule | null>(null);
   const [selectedDayMobile, setSelectedDayMobile] = useState(0);
 
+  const canCreate = can('room_cleaning.schedule') || can('room_cleaning.create');
+  const canUpdate = can('room_cleaning.complete') || can('room_cleaning.schedule');
+  const canDelete = can('room_cleaning.delete');
+
   const [formData, setFormData] = useState<{ room_id: string; day_of_week: 0|1|2|3|4|5|6; time_slot: 1|2|3|4|5|6; assigned_to: string; notes: string; }>({
     room_id: '', day_of_week: 0, time_slot: 1, assigned_to: '', notes: ''
   });
@@ -121,42 +124,31 @@ export function RoomCleaning() {
       ]);
       const propertiesRes = results[0].status === 'fulfilled' ? results[0].value : [];
       const usersRes = results[1].status === 'fulfilled' ? results[1].value : [];
-      if (propertiesRes.length === 0 && propertyScopes.length > 0) {
-        console.warn('Properties API empty, using propertyScopes fallback for penjaga', propertyScopes);
-      }
+      if (propertiesRes.length === 0 && propertyScopes.length > 0) { console.warn('Properties API empty, using propertyScopes fallback for penjaga', propertyScopes); }
       setProperties(propertiesRes as any);
       const filteredCleaners = (usersRes as any[]).filter((u: UserType) => u.role === 'penjaga' || u.role === 'admin');
       setCleaners(filteredCleaners.length > 0 ? filteredCleaners : usersRes as any);
       if (propertiesRes.length > 0 && !selectedProperty) setSelectedProperty((propertiesRes as any)[0].id);
-      else if (propertiesRes.length === 0 && propertyScopes.length > 0 && !selectedProperty) {
-        setSelectedProperty(propertyScopes[0].propertyId);
-      }
+      else if (propertiesRes.length === 0 && propertyScopes.length > 0 && !selectedProperty) { setSelectedProperty(propertyScopes[0].propertyId); }
     } catch (error) { toast.error('Gagal memuat data awal'); }
   };
   
   const fetchSchedules = async () => {
     if (!selectedProperty) return; setIsLoading(true);
     try { 
-      const results = await Promise.allSettled([
-        roomCleaningAPI.getAll(selectedProperty, weekStart), 
-        roomCleaningAPI.getStats(selectedProperty, weekStart)
-      ]);
+      const results = await Promise.allSettled([roomCleaningAPI.getAll(selectedProperty, weekStart), roomCleaningAPI.getStats(selectedProperty, weekStart)]);
       const schedulesRes = results[0].status === 'fulfilled' ? results[0].value : [];
       const statsRes = results[1].status === 'fulfilled' ? results[1].value : null;
-      setSchedules(schedulesRes as any); 
-      setStats(statsRes as any); 
+      setSchedules(schedulesRes as any); setStats(statsRes as any); 
       if (results[0].status === 'rejected') console.error('getAll cleaning failed', results[0].reason);
       if (results[1].status === 'rejected') console.error('getStats cleaning failed', results[1].reason);
-    }
-    catch (error) { toast.error('Gagal memuat jadwal pembersihan'); }
+    } catch (error) { toast.error('Gagal memuat jadwal pembersihan'); }
     finally { setIsLoading(false); }
   };
   
   const fetchRooms = async () => { 
     try { 
-      const results = await Promise.allSettled([
-        (can('rooms.view') || can('rooms.read')) ? roomsAPI.getAll() : Promise.resolve([] as Room[])
-      ]);
+      const results = await Promise.allSettled([(can('rooms.view') || can('rooms.read')) ? roomsAPI.getAll() : Promise.resolve([] as Room[])]);
       const roomsRes = results[0].status === 'fulfilled' ? results[0].value : [];
       const filtered = (roomsRes as any).filter((r: Room) => !selectedProperty || r.property_id === selectedProperty);
       setRooms(filtered);
@@ -167,12 +159,12 @@ export function RoomCleaning() {
   const handleNextWeek = () => setCurrentDate(addWeeks(currentDate, 1));
   const handleCurrentWeek = () => setCurrentDate(new Date());
   const handleGenerateSchedule = async () => { 
-    if (!can('room_cleaning.schedule') && !can('room_cleaning.create')) { toast.error('Tidak ada izin'); return; }
+    if (!canCreate) { toast.error('Tidak ada izin'); return; }
     try { const result = await roomCleaningAPI.generate(selectedProperty, weekStart); toast.success(`${result.count} kamar berhasil dijadwalkan`); fetchSchedules(); } catch (error:any) { toast.error(error?.response?.data?.error || 'Gagal generate jadwal'); } 
   };
   const handleAddSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!can('room_cleaning.schedule') && !can('room_cleaning.create')) { toast.error('Tidak ada izin'); return; }
+    if (!canCreate) { toast.error('Tidak ada izin'); return; }
     if (!formData.room_id) { toast.error('Pilih kamar'); return; }
     try {
       await roomCleaningAPI.create({ room_id: formData.room_id, property_id: selectedProperty, week_start_date: weekStart, day_of_week: formData.day_of_week as any, time_slot: formData.time_slot as any, assigned_to: formData.assigned_to || undefined, notes: formData.notes });
@@ -185,12 +177,12 @@ export function RoomCleaning() {
     }
   };
   const handleStartCleaning = async (schedule: RoomCleaningSchedule) => { 
-    if (!can('room_cleaning.complete') && !can('room_cleaning.schedule')) { toast.error('Tidak ada izin'); return; }
+    if (!canUpdate) { toast.error('Tidak ada izin'); return; }
     try { await roomCleaningAPI.start(schedule.id); toast.success('Pembersihan dimulai'); fetchSchedules(); } catch (error) { toast.error('Gagal memulai pembersihan'); } 
   };
   const handleCompleteCleaning = async () => {
     if (!selectedSchedule) return;
-    if (!can('room_cleaning.complete')) { toast.error('Tidak ada izin'); return; }
+    if (!canUpdate) { toast.error('Tidak ada izin'); return; }
     try { await roomCleaningAPI.complete(selectedSchedule.id, completionNotes, actualDuration); toast.success('Pembersihan selesai dicatat'); setIsCompleteDialogOpen(false); setSelectedSchedule(null); setCompletionNotes(''); setActualDuration(45); fetchSchedules(); } catch (error) { toast.error('Gagal menyelesaikan pembersihan'); }
   };
   const handleSkipCleaning = async () => {
@@ -199,23 +191,21 @@ export function RoomCleaning() {
   };
   const handleDeleteSchedule = async () => {
     if (!selectedSchedule) return;
-    if (!can('room_cleaning.delete') && !can('room_cleaning.schedule')) { toast.error('Tidak ada izin hapus'); return; }
+    if (!canDelete && !canCreate) { toast.error('Tidak ada izin hapus'); return; }
     try { await roomCleaningAPI.delete(selectedSchedule.id); toast.success('Jadwal berhasil dihapus'); setIsDeleteDialogOpen(false); setSelectedSchedule(null); fetchSchedules(); } catch (error) { toast.error('Gagal menghapus jadwal'); }
   };
 
   const getScheduleForSlot = (dayIndex: number, slotNumber: number) => schedules.find(s => s.day_of_week === dayIndex && s.time_slot === slotNumber);
   const getAvailableRooms = () => { const scheduledRoomIds = schedules.map(s => s.room_id); return rooms.filter(r =>!scheduledRoomIds.includes(r.id) && r.status!== 'maintenance'); };
   const canModifySchedule = (schedule: RoomCleaningSchedule) => schedule.status === 'scheduled' || schedule.status === 'rescheduled';
-  const canCreate = can('room_cleaning.schedule') || can('room_cleaning.create');
-  const canUpdate = can('room_cleaning.complete') || can('room_cleaning.schedule');
 
   return (
     <div className="space-y-4 sm:space-y-6 bg-[#FAF9F6] min-h-screen p-3 sm:p-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><h1 className="text-xl sm:text-3xl font-bold text-[#3E2723] truncate">Jadwal Pembersihan Kamar</h1><p className="text-sm sm:text-base text-[#5D4037] mt-1">Kelola jadwal cleaning mingguan</p></div>
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
-          {canCreate && <><Button onClick={handleGenerateSchedule} className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] hover:from-[#5D8A61] hover:to-[#4A6B4E] text-white shadow-lg h-11 w-full sm:w-auto"><Sparkles className="w-4 h-4 mr-2" />Generate Jadwal</Button>
-          <Button onClick={() => setIsAddDialogOpen(true)} className="bg-gradient-to-r from-[#5D4037] to-[#3E2723] hover:from-[#3E2723] hover:to-[#2C1810] text-white shadow-lg h-11 w-full sm:w-auto"><Plus className="w-4 h-4 mr-2" />Tambah Manual</Button></>}
+          {canCreate && (<><Button onClick={handleGenerateSchedule} className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] hover:from-[#5D8A61] hover:to-[#4A6B4E] text-white shadow-lg h-11 w-full sm:w-auto"><Sparkles className="w-4 h-4 mr-2" />Generate Jadwal</Button>
+          <Button onClick={() => setIsAddDialogOpen(true)} className="bg-gradient-to-r from-[#5D4037] to-[#3E2723] hover:from-[#3E2723] hover:to-[#2C1810] text-white shadow-lg h-11 w-full sm:w-auto"><Plus className="w-4 h-4 mr-2" />Tambah Manual</Button></>)}
         </div>
       </div>
 
@@ -258,7 +248,7 @@ export function RoomCleaning() {
               {Array.from({ length: 7 }, (_, dayIdx) => {
                 const schedule = getScheduleForSlot(dayIdx, slot.slot);
                 return (<div key={`${slot.slot}-${dayIdx}`} className="p-2 border-r border-[#D7CCC8] last:border-r-0 min-h-[80px] bg-[#FAF9F6]">
-                  {schedule? (<div onClick={() => { setSelectedSchedule(schedule); setIsDetailDialogOpen(true); }} className={cn("h-full p-3 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md", STATUS_CONFIG[schedule.status].bgColor, STATUS_CONFIG[schedule.status].color.split(' ')[2], "border-current")}><div className="flex items-center justify-between mb-1"><span className="font-bold text-[#3E2723] text-sm">{schedule.room_number}</span>{(() => { const StatusIcon = STATUS_CONFIG[schedule.status].icon; return <StatusIcon className="w-4 h-4 text-[#5D4037]" />; })()}</div>{schedule.assigned_name && (<div className="flex items-center gap-1 text-xs text-[#5D4037] mt-1"><User className="w-3 h-3" /><span className="truncate">{schedule.assigned_name}</span></div>)}<Badge variant="outline" className={cn("mt-2 text-xs border-current", STATUS_CONFIG[schedule.status].color)}>{STATUS_CONFIG[schedule.status].label}</Badge></div>) : (canCreate ? <div onClick={() => { setFormData((p:any)=>({...p, day_of_week: dayIdx as any, time_slot: slot.slot as any})); setIsAddDialogOpen(true); }} className="h-full flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg cursor-pointer hover:border-[#8D6E63] hover:bg-[#F5F5DC] transition-colors"><Plus className="w-5 h-5 text-[#8D6E63]" /></div> : <div className="h-full" />)}
+                  {schedule? (<div onClick={() => { setSelectedSchedule(schedule); setIsDetailDialogOpen(true); }} className={cn("h-full p-3 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md", STATUS_CONFIG[schedule.status].bgColor, STATUS_CONFIG[schedule.status].color.split(' ')[2], "border-current")}><div className="flex items-center justify-between mb-1"><span className="font-bold text-[#3E2723] text-sm">{schedule.room_number}</span>{(() => { const StatusIcon = STATUS_CONFIG[schedule.status].icon; return <StatusIcon className="w-4 h-4 text-[#5D4037]" />; })()}</div>{schedule.assigned_name && (<div className="flex items-center gap-1 text-xs text-[#5D4037] mt-1"><User className="w-3 h-3" /><span className="truncate">{schedule.assigned_name}</span></div>)}<Badge variant="outline" className={cn("mt-2 text-xs border-current", STATUS_CONFIG[schedule.status].color)}>{STATUS_CONFIG[schedule.status].label}</Badge></div>) : (canCreate ? <div onClick={() => { setFormData((p:any)=>({...p, day_of_week: dayIdx as any, time_slot: slot.slot as any})); setIsAddDialogOpen(true); }} className="h-full flex items-center justify-center border-2 border-dashed border-[#D7CCC8] rounded-lg cursor-pointer hover:border-[#8D6E63] hover:bg-[#F5F5DC] transition-colors"><Plus className="w-5 h-5 text-[#8D6E63]" /></div> : <div className="h-full flex items-center justify-center text-xs text-gray-300">-</div>)}
                 </div>);
               })}
             </div>
@@ -329,8 +319,12 @@ export function RoomCleaning() {
                   {selectedSchedule.notes && (<div className="p-3 bg-[#F5F5DC] rounded-lg"><p className="text-[#5D4037] text-xs">Catatan:</p><p className="text-[#3E2723] text-sm break-words">{selectedSchedule.notes}</p></div>)}
                 </div>
                 <div className="p-4 border-t flex flex-col gap-2 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-                  <div className="flex gap-2">{canModifySchedule(selectedSchedule) && canUpdate && (<><Button variant="outline" className="flex-1 h-11 border-[#C17C53] text-[#C17C53]" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}{selectedSchedule.status === 'in_progress' && canUpdate && (<Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)}</div>
-                  <div className="flex gap-2"><Button variant="outline" className="flex-1 h-11 border-[#8D6E63] text-[#5D4037]" onClick={() => setIsDetailDialogOpen(false)}>Tutup</Button>{can('room_cleaning.delete') && <Button variant="outline" className="flex-1 h-11 border-red-500 text-red-500" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}</div>
+                  <div className="flex gap-2">
+                    {canModifySchedule(selectedSchedule) && canUpdate && (<><Button variant="outline" className="flex-1 h-11 border-[#C17C53] text-[#C17C53]" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}
+                    {selectedSchedule.status === 'in_progress' && canUpdate && (<Button className="flex-1 bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white h-11" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)}
+                    {!canUpdate && !canDelete && selectedSchedule.status !== 'completed' && (<Button variant="outline" disabled className="flex-1 h-11">Read-only</Button>)}
+                  </div>
+                  <div className="flex gap-2"><Button variant="outline" className="flex-1 h-11 border-[#8D6E63] text-[#5D4037]" onClick={() => setIsDetailDialogOpen(false)}>Tutup</Button>{canDelete && (<Button variant="outline" className="flex-1 h-11 border-red-500 text-red-500" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}</div>
                 </div>
               </>
             )}
@@ -342,7 +336,7 @@ export function RoomCleaning() {
             {selectedSchedule && (
               <>
                 <div className="space-y-4"><div className="grid grid-cols-2 gap-4 text-sm"><div><p className="text-[#5D4037]">Properti</p><p className="font-semibold text-[#3E2723]">{selectedSchedule.property_name || 'Kebayoran Lama'}</p></div><div><p className="text-[#5D4037]">Jadwal</p><p className="font-semibold text-[#3E2723]">{DAYS[selectedSchedule.day_of_week]}, {SLOTS.find(s => s.slot === selectedSchedule.time_slot)?.time}</p></div></div>{selectedSchedule.notes && (<div className="p-3 bg-[#F5F5DC] rounded-lg"><p className="text-[#5D4037] text-sm">Catatan:</p><p className="text-[#3E2723]">{selectedSchedule.notes}</p></div>)}</div>
-                <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setIsDetailDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Tutup</Button>{canModifySchedule(selectedSchedule) && canUpdate && (<><Button variant="outline" className="border-[#C17C53] text-[#C17C53]" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}{selectedSchedule.status === 'in_progress' && canUpdate && (<Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)} {can('room_cleaning.delete') && <Button variant="outline" className="border-red-500 text-red-500" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}</DialogFooter>
+                <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setIsDetailDialogOpen(false)} className="border-[#8D6E63] text-[#5D4037]">Tutup</Button>{canModifySchedule(selectedSchedule) && canUpdate && (<><Button variant="outline" className="border-[#C17C53] text-[#C17C53]" onClick={() => { setIsDetailDialogOpen(false); setIsSkipDialogOpen(true); }}><AlertCircle className="w-4 h-4 mr-2" />Lewati</Button><Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); handleStartCleaning(selectedSchedule); }}><PlayCircle className="w-4 h-4 mr-2" />Mulai</Button></>)}{selectedSchedule.status === 'in_progress' && canUpdate && (<Button className="bg-gradient-to-r from-[#7A9E7E] to-[#5D8A61] text-white" onClick={() => { setIsDetailDialogOpen(false); setIsCompleteDialogOpen(true); }}><CheckCircle2 className="w-4 h-4 mr-2" />Selesai</Button>)} {canDelete && (<Button variant="outline" className="border-red-500 text-red-500" onClick={() => { setIsDetailDialogOpen(false); setIsDeleteDialogOpen(true); }}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}</DialogFooter>
               </>
             )}
           </DialogContent>

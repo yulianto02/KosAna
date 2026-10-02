@@ -1,4 +1,4 @@
-// app/src/components/layout/Sidebar.tsx - Step 6 + Access Control section (users.manage)
+// app/src/components/layout/Sidebar.tsx - Step 7: Settings moved to Access Control (admin only)
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -74,10 +74,10 @@ const navConfig: NavConfig[] = [
   { id: 'maintenance', label: PAGE_LABELS.maintenance, icon: Wrench, permissions: ['maintenance.view','maintenance.read'], section: 'main' },
   { id: 'ac-cleaning', label: PAGE_LABELS['ac-cleaning'], icon: Wind, permissions: ['ac_cleaning.view','ac_cleaning.read'], section: 'main' },
   { id: 'reports', label: PAGE_LABELS.reports, icon: BarChart3, permissions: ['reports.view','reports.read'], section: 'main' },
-  { id: 'settings', label: PAGE_LABELS.settings, icon: Settings, permissions: ['settings.view','settings.read'], section: 'main' },
-  // Step 6 - Access Control (only users.manage)
+  // Step 7 - Access Control (admin only) - Settings moved here per updated requirement
   { id: 'users', label: PAGE_LABELS.users, icon: Users, permissions: ['users.manage'], section: 'access' },
   { id: 'roles', label: PAGE_LABELS.roles, icon: ShieldCheck, permissions: ['users.manage'], section: 'access' },
+  { id: 'settings', label: PAGE_LABELS.settings, icon: Settings, permissions: ['users.manage'], section: 'access' },
 ];
 
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse, onNavigate, variant = 'sidebar' }: SidebarProps) {
