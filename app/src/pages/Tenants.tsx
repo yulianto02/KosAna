@@ -1,6 +1,6 @@
-// app/src/pages/Tenants.tsx - Step 7 Owner Read-Only FINAL (beautiful admin-like, zero mutation for owner matuf)
+// app/src/pages/Tenants.tsx - Step 8.2 v2: Hide Sewa/Bulan from penjaga (anti-iri) + tel: links
 import { useState, useEffect, useMemo } from 'react';
-import { Search, Eye, Edit, Trash2, MoreHorizontal, Phone, Mail, UserPlus, Building2, Calendar, Users, LogOut } from 'lucide-react';
+import { Search, Eye, Edit, Trash2, MoreHorizontal, Phone, Mail, UserPlus, Building2, Calendar, Users, LogOut, PhoneCall, MessageCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,9 +17,30 @@ import { Switch } from '@/components/ui/switch';
 import { tenantsAPI, propertiesAPI, roomsAPI, paymentsAPI } from '@/services/api';
 import type { Tenant, Property, Room, Payment } from '@/types';
 import { cn } from '@/lib/utils';
-import { formatCurrency, formatDate, getPaymentStatusColor, getPaymentStatusLabel } from '@/lib/format';
+import { formatCurrency, formatDate } from '@/lib/format';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/context/AuthContext';
+
+function normalizeTel(phone: string): string {
+  if (!phone) return '';
+  return phone.replace(/[^0-9+]/g, '');
+}
+function getTelHref(phone: string): string {
+  const tel = normalizeTel(phone);
+  return tel ? `tel:${tel}` : '#';
+}
+function getWaHref(phone: string): string {
+  if (!phone) return '#';
+  let digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('0')) digits = '62' + digits.slice(1);
+  if (phone.trim().startsWith('+')) {
+    const raw = phone.replace(/[^0-9]/g, '');
+    if (raw.startsWith('0')) digits = '62' + raw.slice(1);
+    else digits = raw;
+  }
+  return `https://wa.me/${digits}`;
+}
 
 function TenantFormContent({ formData, setFormData, properties, rooms }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[] }) {
   const getAvailableRooms = (propertyId: string) => {
@@ -79,7 +100,6 @@ function TenantFormContent({ formData, setFormData, properties, rooms }: { formD
           <div className="space-y-2"><Label className="text-sm">Email Kontak (opsional)</Label><Input value={formData.email} onChange={(e) => setFormData((p:any)=>({...p, email: e.target.value}))} className="h-11 text-base sm:h-10 sm:text-sm" /></div>
           <div className="space-y-2"><Label className="text-sm">Catatan</Label><Input value={formData.notes || ''} onChange={(e) => setFormData((p:any)=>({...p, notes: e.target.value}))} placeholder="Catatan tambahan" className="h-11 text-base sm:h-10 sm:text-sm" /></div>
         </div>
-        <p className="text-xs text-gray-400">Fields KTP image, contract file, signature akan di-handle di step upload terpisah.</p>
       </TabsContent>
     </Tabs>
   );
@@ -88,6 +108,7 @@ function TenantFormContent({ formData, setFormData, properties, rooms }: { formD
 export function Tenants() {
   const isMobile = useIsMobile();
   const { can } = usePermissions();
+  const { user } = useAuth() as any;
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -103,6 +124,11 @@ export function Tenants() {
   const [checkOutReason, setCheckOutReason] = useState('');
   const [selectedProperty, setSelectedProperty] = useState<string>('all');
   const [selectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+
+  // Step 8.2 v2: Hide sewa from penjaga to avoid iri
+  const role = (user?.role || user?.globalRole || '').toLowerCase();
+  const isPenjaga = role.includes('penjaga') || role === 'caretaker';
+  const showSewa = !isPenjaga; // admin & owner matuf still see it
 
   const [formData, setFormData] = useState({
     full_name: '', phone: '', email: '', emergency_contact: '', emergency_phone: '', ktp_number: '',
@@ -126,7 +152,6 @@ export function Tenants() {
       const propertiesRes = results[1].status === 'fulfilled' ? results[1].value : [];
       const roomsRes = results[2].status === 'fulfilled' ? results[2].value : [];
       const paymentsRes = results[3].status === 'fulfilled' ? results[3].value : [];
-      results.forEach((r, i) => { if (r.status === 'rejected') { console.warn(`Tenants fetch ${['tenants','properties','rooms','payments'][i]} failed:`, r.reason); } });
       setTenants(tenantsRes as any); setProperties(propertiesRes as any); setRooms(roomsRes as any); setPayments(paymentsRes as any);
     } catch (error) { toast.error('Gagal memuat data'); } finally { setIsLoading(false); }
   };
@@ -152,7 +177,6 @@ export function Tenants() {
 
   const getRoomInfo = (roomId: string) => rooms.find(r => r.id === roomId);
   const getPropertyInfo = (propertyId: string) => properties.find(p => p.id === propertyId);
-  const getTenantPayments = (tenantId: string) => payments.filter(p => p.tenant_id === tenantId).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const resetForm = () => {
     setFormData({
@@ -183,7 +207,7 @@ export function Tenants() {
       if (isEditMode && selectedTenant) { await tenantsAPI.update(selectedTenant.id, data); toast.success('Penghuni berhasil diperbarui'); }
       else { await tenantsAPI.create(data); toast.success('Penghuni berhasil ditambahkan'); }
       setIsAddDialogOpen(false); resetForm(); fetchData();
-    } catch (error:any) { console.error(error); toast.error(error?.response?.data?.message || error?.message || (isEditMode? 'Gagal memperbarui penghuni' : 'Gagal menambahkan penghuni')); }
+    } catch (error:any) { toast.error(error?.response?.data?.message || error?.message || (isEditMode? 'Gagal memperbarui penghuni' : 'Gagal menambahkan penghuni')); }
   };
 
   const openCheckOutDialog = (tenant: Tenant) => { setSelectedTenant(tenant); setCheckOutReason(''); setIsCheckOutDialogOpen(true); };
@@ -206,7 +230,7 @@ export function Tenants() {
   return (
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Manajemen Penghuni</h1><p className="text-sm sm:text-base text-gray-500">Kelola data penghuni dan kontrak</p></div>
+        <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Manajemen Penghuni</h1><p className="text-sm sm:text-base text-gray-500">Kelola data penghuni dan kontrak — ketuk nomor untuk telpon</p></div>
         {canCreate && <Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={openAddDialog}><UserPlus className="w-4 h-4 mr-2" />Tambah Penghuni</Button>}
       </div>
 
@@ -240,10 +264,19 @@ export function Tenants() {
         <>
           <Card className="hidden sm:block w-full overflow-hidden">
             <div className="overflow-x-auto"><table className="w-full">
-              <thead className="bg-gray-50 border-b"><tr><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Penghuni</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kamar</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kontak</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Sewa/Bulan</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Status</th><th className="px-4 py-3 text-right text-sm font-medium text-gray-500">Aksi</th></tr></thead>
+              <thead className="bg-gray-50 border-b"><tr><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Penghuni</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kamar</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kontak</th>{showSewa && <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Sewa/Bulan</th>}<th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Status</th><th className="px-4 py-3 text-right text-sm font-medium text-gray-500">Aksi</th></tr></thead>
               <tbody className="divide-y">{filteredTenants.map((tenant) => {
                 const room = getRoomInfo(tenant.room_id); const property = getPropertyInfo(tenant.property_id);
-                return (<tr key={tenant.id} className="hover:bg-gray-50"><td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar className="w-10 h-10"><AvatarFallback className="bg-[#1A3D5C] text-white">{tenant.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2)}</AvatarFallback></Avatar><div><p className="font-medium text-gray-900">{tenant.full_name}</p>{tenant.is_shared_room && tenant.secondary_tenant_name && (<p className="text-xs text-gray-500">+ {tenant.secondary_tenant_name}</p>)}</div></div></td><td className="px-4 py-3"><p className="font-medium">{room?.room_number || tenant.room_id?.slice(0,8) || '-'}</p><p className="text-xs text-gray-500">{property?.name || tenant.property_id?.slice(0,8) || '-'}</p></td><td className="px-4 py-3"><div className="space-y-1"><div className="flex items-center gap-1 text-sm"><Phone className="w-3 h-3 text-gray-400" />{tenant.phone}</div></div></td><td className="px-4 py-3"><p className="font-medium">{formatCurrency(tenant.total_monthly_rent)}</p><p className="text-xs text-gray-500">Jatuh tempo: tgl {tenant.payment_due_day}</p></td><td className="px-4 py-3"><Badge className={cn(tenant.status === 'active' && "bg-green-100 text-green-700", tenant.status === 'archived' && "bg-gray-100 text-gray-700", tenant.status === 'moved_out' && "bg-orange-100 text-orange-700")}>{tenant.status === 'active'? 'Aktif' : tenant.status === 'archived'? 'Arsip' : 'Keluar'}</Badge></td><td className="px-4 py-3 text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setSelectedTenant(tenant)}><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>{canUpdate && <DropdownMenuItem onClick={() => openEditDialog(tenant)}><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>}{tenant.status === 'active' && canUpdate && (<DropdownMenuItem className="text-orange-600" onClick={() => openCheckOutDialog(tenant)}><LogOut className="w-4 h-4 mr-2" />Check Out</DropdownMenuItem>)}{canDelete && <DropdownMenuItem className="text-red-600" onClick={() => openDeleteDialog(tenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></td></tr>);
+                return (<tr key={tenant.id} className="hover:bg-gray-50"><td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar className="w-10 h-10"><AvatarFallback className="bg-[#1A3D5C] text-white">{tenant.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2)}</AvatarFallback></Avatar><div><p className="font-medium text-gray-900">{tenant.full_name}</p>{tenant.is_shared_room && tenant.secondary_tenant_name && (<p className="text-xs text-gray-500">+ {tenant.secondary_tenant_name}</p>)}</div></div></td><td className="px-4 py-3"><p className="font-medium">{room?.room_number || tenant.room_id?.slice(0,8) || '-'}</p><p className="text-xs text-gray-500">{property?.name || tenant.property_id?.slice(0,8) || '-'}</p></td>
+                <td className="px-4 py-3"><div className="space-y-1">
+                  <a href={getTelHref(tenant.phone)} className="flex items-center gap-1.5 text-sm text-[#1A3D5C] hover:text-[#D4A84B] font-medium hover:underline"><Phone className="w-3.5 h-3.5" />{tenant.phone}</a>
+                  <div className="flex gap-2">
+                    <a href={getTelHref(tenant.phone)} className="inline-flex items-center gap-1 text-[11px] bg-green-50 text-green-700 px-2 py-0.5 rounded-full hover:bg-green-100"><PhoneCall className="w-3 h-3" />Telpon</a>
+                    <a href={getWaHref(tenant.phone)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] bg-[#25D366]/10 text-[#25D366] px-2 py-0.5 rounded-full hover:bg-[#25D366]/20"><MessageCircle className="w-3 h-3" />WA</a>
+                  </div>
+                </div></td>
+                {showSewa && <td className="px-4 py-3"><p className="font-medium">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(tenant.total_monthly_rent)}</p><p className="text-xs text-gray-500">Jatuh tempo: tgl {tenant.payment_due_day}</p></td>}
+                <td className="px-4 py-3"><Badge className={cn(tenant.status === 'active' && "bg-green-100 text-green-700", tenant.status === 'archived' && "bg-gray-100 text-gray-700", tenant.status === 'moved_out' && "bg-orange-100 text-orange-700")}>{tenant.status === 'active'? 'Aktif' : tenant.status === 'archived'? 'Arsip' : 'Keluar'}</Badge></td><td className="px-4 py-3 text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setSelectedTenant(tenant)}><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem><DropdownMenuItem asChild><a href={getTelHref(tenant.phone)}><PhoneCall className="w-4 h-4 mr-2" />Telpon</a></DropdownMenuItem><DropdownMenuItem asChild><a href={getWaHref(tenant.phone)} target="_blank"><MessageCircle className="w-4 h-4 mr-2" />WhatsApp</a></DropdownMenuItem>{canUpdate && <DropdownMenuItem onClick={() => openEditDialog(tenant)}><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>}{tenant.status === 'active' && canUpdate && (<DropdownMenuItem className="text-orange-600" onClick={() => openCheckOutDialog(tenant)}><LogOut className="w-4 h-4 mr-2" />Check Out</DropdownMenuItem>)}{canDelete && <DropdownMenuItem className="text-red-600" onClick={() => openDeleteDialog(tenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></td></tr>);
               })}</tbody>
             </table></div>
           </Card>
@@ -252,13 +285,26 @@ export function Tenants() {
             {filteredTenants.map((tenant) => {
               const room = getRoomInfo(tenant.room_id); const property = getPropertyInfo(tenant.property_id);
               return (
-                <Card key={tenant.id} className="w-full overflow-hidden">
+                <Card key={tenant.id} className="w-full overflow-hidden border-l-4 border-l-[#1A3D5C]">
                   <CardContent className="p-4">
                     <div className="flex gap-3">
                       <Avatar className="w-11 h-11 shrink-0"><AvatarFallback className="bg-[#1A3D5C] text-white text-sm">{tenant.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2)}</AvatarFallback></Avatar>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2"><div className="min-w-0 flex-1"><p className="font-semibold text-gray-900 truncate">{tenant.full_name}</p><p className="text-xs text-gray-500 truncate">{room?.room_number || '-'} • {property?.name || '-'}</p></div><Badge className={cn("shrink-0 text-xs", tenant.status === 'active' && "bg-green-100 text-green-700", tenant.status === 'archived' && "bg-gray-100 text-gray-700", tenant.status === 'moved_out' && "bg-orange-100 text-orange-700")}>{tenant.status === 'active'? 'Aktif' : 'Arsip'}</Badge></div>
-                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600"><span className="flex items-center gap-1"><Phone className="w-3 h-3" />{tenant.phone}</span><span className="font-medium">{formatCurrency(tenant.total_monthly_rent)}</span></div>
+                        <div className="mt-3 space-y-2">
+                          <a href={getTelHref(tenant.phone)} className="flex items-center gap-2 text-sm font-medium text-[#1A3D5C] bg-blue-50 px-3 py-2 rounded-lg active:bg-blue-100"><Phone className="w-4 h-4" />{tenant.phone} <span className="ml-auto text-[11px] bg-[#1A3D5C] text-white px-2 py-0.5 rounded-full">TAP TO CALL</span></a>
+                          <div className="flex gap-2">
+                            <a href={getTelHref(tenant.phone)} className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-green-600 text-white px-3 py-2.5 rounded-lg active:bg-green-700 min-h-[44px]"><PhoneCall className="w-4 h-4" />Telpon</a>
+                            <a href={getWaHref(tenant.phone)} target="_blank" rel="noopener noreferrer" className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-[#25D366] text-white px-3 py-2.5 rounded-lg active:bg-[#1DA851] min-h-[44px]"><MessageCircle className="w-4 h-4" />WhatsApp</a>
+                          </div>
+                          {tenant.emergency_phone && (
+                            <a href={getTelHref(tenant.emergency_phone)} className="flex items-center gap-2 text-xs text-orange-700 bg-orange-50 px-3 py-2 rounded-lg"><Phone className="w-3.5 h-3.5" />Darurat: {tenant.emergency_phone} ({tenant.emergency_contact})</a>
+                          )}
+                        </div>
+                        {/* Step 8.2 v2: Hide sewa for penjaga */}
+                        {!isPenjaga && (
+                          <div className="mt-2 text-xs text-gray-600"><span className="font-medium">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(tenant.total_monthly_rent)}</span> • Jatuh tempo tgl {tenant.payment_due_day}</div>
+                        )}
                       </div>
                       <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-11 w-11 shrink-0 -mr-2"><MoreHorizontal className="w-5 h-5" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setSelectedTenant(tenant)} className="h-11"><Eye className="w-4 h-4 mr-2" />Lihat Detail</DropdownMenuItem>{canUpdate && <DropdownMenuItem onClick={() => openEditDialog(tenant)} className="h-11"><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>}{tenant.status === 'active' && canUpdate && (<DropdownMenuItem className="text-orange-600 h-11" onClick={() => openCheckOutDialog(tenant)}><LogOut className="w-4 h-4 mr-2" />Check Out</DropdownMenuItem>)}{canDelete && <DropdownMenuItem className="text-red-600 h-11" onClick={() => openDeleteDialog(tenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
                     </div>
@@ -298,17 +344,53 @@ export function Tenants() {
                 <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle>{selectedTenant.full_name}</SheetTitle><SheetDescription>Detail penghuni</SheetDescription></SheetHeader>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
                   <div className="flex items-center gap-3"><Avatar className="w-14 h-14"><AvatarFallback className="bg-[#1A3D5C] text-white">{selectedTenant.full_name.split(' ').map(n=>n[0]).join('').slice(0,2)}</AvatarFallback></Avatar><div><p className="font-semibold">{selectedTenant.full_name}</p><p className="text-sm text-gray-500">{getRoomInfo(selectedTenant.room_id)?.room_number} • {getPropertyInfo(selectedTenant.property_id)?.name}</p></div></div>
-                  <div className="space-y-2 text-sm"><p><span className="text-gray-500">Telepon:</span> {selectedTenant.phone}</p><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p><p><span className="text-gray-500">Darurat:</span> {selectedTenant.emergency_contact} - {selectedTenant.emergency_phone}</p><p><span className="text-gray-500">Check-in:</span> {formatDate(selectedTenant.check_in_date)}</p><p><span className="text-gray-500">Sewa:</span> {formatCurrency(selectedTenant.total_monthly_rent)} / bulan</p></div>
+                  <div className="space-y-3 text-sm">
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Kontak Utama</p>
+                      <a href={getTelHref(selectedTenant.phone)} className="flex items-center justify-between p-3 bg-blue-50 rounded-xl hover:bg-blue-100 active:bg-blue-200">
+                        <div className="flex items-center gap-3"><div className="w-10 h-10 bg-[#1A3D5C] rounded-full flex items-center justify-center"><Phone className="w-5 h-5 text-white" /></div><div><p className="font-semibold text-gray-900">{selectedTenant.phone}</p><p className="text-xs text-gray-500">Tap untuk telpon</p></div></div><PhoneCall className="w-5 h-5 text-[#1A3D5C]" />
+                      </a>
+                      <div className="grid grid-cols-2 gap-2">
+                        <a href={getTelHref(selectedTenant.phone)} className="flex items-center justify-center gap-2 bg-green-600 text-white py-3 rounded-xl font-medium active:bg-green-700 min-h-[48px]"><PhoneCall className="w-4 h-4" />Telpon</a>
+                        <a href={getWaHref(selectedTenant.phone)} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 bg-[#25D366] text-white py-3 rounded-xl font-medium active:bg-[#1DA851] min-h-[48px]"><MessageCircle className="w-4 h-4" />WhatsApp</a>
+                      </div>
+                    </div>
+                    {selectedTenant.emergency_phone && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Kontak Darurat</p>
+                        <a href={getTelHref(selectedTenant.emergency_phone)} className="flex items-center justify-between p-3 bg-orange-50 rounded-xl hover:bg-orange-100">
+                          <div className="flex items-center gap-3"><div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center"><Phone className="w-5 h-5 text-white" /></div><div><p className="font-semibold text-gray-900">{selectedTenant.emergency_phone}</p><p className="text-xs text-gray-600">{selectedTenant.emergency_contact}</p></div></div><PhoneCall className="w-5 h-5 text-orange-600" />
+                        </a>
+                      </div>
+                    )}
+                    {/* Hide sewa for penjaga */}
+                    {!isPenjaga && (
+                      <div className="pt-2 border-t space-y-1 text-sm"><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p><p><span className="text-gray-500">Check-in:</span> {new Date(selectedTenant.check_in_date).toLocaleDateString('id-ID')}</p><p><span className="text-gray-500">Sewa:</span> {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(selectedTenant.total_monthly_rent)} / bulan</p></div>
+                    )}
+                    {isPenjaga && (
+                      <div className="pt-2 border-t space-y-1 text-sm"><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p><p><span className="text-gray-500">Check-in:</span> {new Date(selectedTenant.check_in_date).toLocaleDateString('id-ID')}</p></div>
+                    )}
+                  </div>
                 </div>
-                <div className="p-4 border-t flex gap-3"><Button variant="outline" className="flex-1" onClick={()=>setSelectedTenant(null)}>Tutup</Button>{canUpdate && <Button className="flex-1 bg-[#1A3D5C]" onClick={()=>openEditDialog(selectedTenant)}><Edit className="w-4 h-4 mr-2" />Edit</Button>}</div>
+                <div className="p-4 border-t flex gap-3 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button variant="outline" className="flex-1 h-11" onClick={()=>setSelectedTenant(null)}>Tutup</Button>{canUpdate && <Button className="flex-1 bg-[#1A3D5C] h-11" onClick={()=>openEditDialog(selectedTenant)}><Edit className="w-4 h-4 mr-2" />Edit</Button>}</div>
               </>
             )}
           </SheetContent>
         </Sheet>
       ) : (
         <Dialog open={!!selectedTenant && !isAddDialogOpen && !isDeleteDialogOpen && !isCheckOutDialogOpen} onOpenChange={() => setSelectedTenant(null)}>
-          <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{selectedTenant?.full_name}</DialogTitle><DialogDescription>Detail lengkap penghuni</DialogDescription></DialogHeader>
-            {selectedTenant && (<div className="space-y-4"><div className="space-y-2 text-sm"><p><span className="text-gray-500">Telepon:</span> {selectedTenant.phone}</p><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p><p><span className="text-gray-500">Sewa:</span> {formatCurrency(selectedTenant.total_monthly_rent)}</p></div><DialogFooter><Button variant="outline" onClick={()=>setSelectedTenant(null)}>Tutup</Button>{canUpdate && <Button className="bg-[#1A3D5C]" onClick={()=>openEditDialog(selectedTenant)}><Edit className="w-4 h-4 mr-2" />Edit</Button>}{canDelete && <Button variant="destructive" onClick={()=>openDeleteDialog(selectedTenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}</DialogFooter></div>)}
+          <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{selectedTenant?.full_name}</DialogTitle><DialogDescription>Detail lengkap penghuni — klik nomor untuk telpon</DialogDescription></DialogHeader>
+            {selectedTenant && (<div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <a href={getTelHref(selectedTenant.phone)} className="flex items-center gap-2 p-3 border rounded-lg hover:bg-gray-50"><Phone className="w-4 h-4 text-[#1A3D5C]" /><div><p className="text-xs text-gray-500">Telepon</p><p className="font-medium">{selectedTenant.phone}</p></div></a>
+                <a href={getTelHref(selectedTenant.emergency_phone)} className="flex items-center gap-2 p-3 border rounded-lg hover:bg-orange-50"><Phone className="w-4 h-4 text-orange-600" /><div><p className="text-xs text-gray-500">Darurat {selectedTenant.emergency_contact}</p><p className="font-medium">{selectedTenant.emergency_phone}</p></div></a>
+              </div>
+              {!isPenjaga ? (
+                <div className="space-y-2 text-sm"><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p><p><span className="text-gray-500">Sewa:</span> {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(selectedTenant.total_monthly_rent)}</p></div>
+              ) : (
+                <div className="space-y-2 text-sm"><p><span className="text-gray-500">KTP:</span> {selectedTenant.ktp_number}</p></div>
+              )}
+              <DialogFooter><Button variant="outline" onClick={()=>setSelectedTenant(null)}>Tutup</Button>{canUpdate && <Button className="bg-[#1A3D5C]" onClick={()=>openEditDialog(selectedTenant)}><Edit className="w-4 h-4 mr-2" />Edit</Button>}{canDelete && <Button variant="destructive" onClick={()=>openDeleteDialog(selectedTenant)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>}</DialogFooter></div>)}
           </DialogContent>
         </Dialog>
       )}

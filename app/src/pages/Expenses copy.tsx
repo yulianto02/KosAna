@@ -1,6 +1,6 @@
-// app/src/pages/Expenses.tsx - Step 8.3a: Photo upload + Total footer for P&L (future-proof Android WebView/TWA)
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Search, Receipt, Download, Edit, Trash2, Camera, Image as ImageIcon, X, Calculator, TrendingDown } from 'lucide-react';
+// app/src/pages/Expenses.tsx - Step 7 Owner Read-Only (no banner, beautiful admin-like)
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Search, Receipt, Download, Edit, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,76 +16,8 @@ import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate, getExpenseTypeLabel } from '@/lib/format';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useAuth } from '@/context/AuthContext';
 
-// Step 8.3a: Compress image for mobile upload (<1MB for Android WebView/TWA)
-async function compressImage(file: File, maxSizeMB = 1): Promise<File> {
-  if (file.size <= maxSizeMB * 1024 * 1024) return file;
-  
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let width = img.width;
-      let height = img.height;
-      const maxDim = 1280;
-      if (width > maxDim || height > maxDim) {
-        if (width > height) {
-          height = (height / width) * maxDim;
-          width = maxDim;
-        } else {
-          width = (width / height) * maxDim;
-          height = maxDim;
-        }
-      }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0, width, height);
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const compressed = new File([blob], file.name, { type: 'image/jpeg' });
-          URL.revokeObjectURL(url);
-          resolve(compressed.size < file.size ? compressed : file);
-        } else {
-          resolve(file);
-        }
-      }, 'image/jpeg', 0.7);
-    };
-    img.src = url;
-  });
-}
-
-function AddExpenseForm({ formData, setFormData, properties, rooms, receiptFile, setReceiptFile, receiptPreview, setReceiptPreview, isEdit = false }: { 
-  formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[]; 
-  receiptFile: File | null; setReceiptFile: (f: File | null) => void;
-  receiptPreview: string | null; setReceiptPreview: (s: string | null) => void;
-  isEdit?: boolean 
-}) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast.error('Hanya file gambar yang diperbolehkan');
-      return;
-    }
-    const compressed = await compressImage(file, 1);
-    setReceiptFile(compressed);
-    const preview = URL.createObjectURL(compressed);
-    setReceiptPreview(preview);
-    toast.success(`Foto siap: ${(compressed.size/1024).toFixed(0)}KB`);
-  };
-
-  const clearPhoto = () => {
-    setReceiptFile(null);
-    if (receiptPreview) URL.revokeObjectURL(receiptPreview);
-    setReceiptPreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
+function AddExpenseForm({ formData, setFormData, properties, rooms, isEdit = false }: { formData: any; setFormData: React.Dispatch<React.SetStateAction<any>>; properties: Property[]; rooms: Room[]; isEdit?: boolean }) {
   return (
     <div className="space-y-4">
       <div className="space-y-2"><Label className="text-sm">Properti *</Label>
@@ -95,7 +27,7 @@ function AddExpenseForm({ formData, setFormData, properties, rooms, receiptFile,
       </div>
       <div className="space-y-2"><Label className="text-sm">Kamar (opsional)</Label>
         <select value={formData.room_id} onChange={(e) => setFormData((p:any)=>({...p, room_id: e.target.value}))} className="w-full h-11 sm:h-10 px-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]">
-          <option value="">Overhead (Operasional)</option>{rooms.filter(r => r.property_id === formData.property_id).map(r => (<option key={r.id} value={r.id}>{r.room_number}</option>))}
+          <option value="">Overhead</option>{rooms.filter(r => r.property_id === formData.property_id).map(r => (<option key={r.id} value={r.id}>{r.room_number}</option>))}
         </select>
       </div>
       <div className="space-y-2"><Label className="text-sm">Kategori *</Label>
@@ -106,36 +38,7 @@ function AddExpenseForm({ formData, setFormData, properties, rooms, receiptFile,
       <div className="space-y-2"><Label className="text-sm">Nama Provider *</Label><Input value={formData.provider_name} onChange={(e) => setFormData((p:any)=>({...p, provider_name: e.target.value}))} placeholder="Contoh: PLN, PDAM, dll" required className="h-11 text-base sm:h-10 sm:text-sm" /></div>
       <div className="space-y-2"><Label className="text-sm">Jumlah (Rp) *</Label><Input type="text" inputMode="numeric" value={formData.amount} onChange={(e) => setFormData((p:any)=>({...p, amount: parseInt(e.target.value) || 0}))} required className="h-11 text-base sm:h-10 sm:text-sm" /></div>
       <div className="space-y-2"><Label className="text-sm">Tanggal *</Label><Input type="date" value={formData.expense_date} onChange={(e) => setFormData((p:any)=>({...p, expense_date: e.target.value}))} required className="h-11 text-base sm:h-10 sm:text-sm" /></div>
-
-      {/* Step 8.3a: Photo Upload - future-proof for Android WebView/TWA */}
-      <div className="space-y-2">
-        <Label className="text-sm flex items-center gap-1.5"><Camera className="w-4 h-4" />Foto Nota/Bukti (opsional)</Label>
-        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" id="receipt-upload" />
-        {!receiptPreview ? (
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" className="flex-1 h-11" onClick={() => fileInputRef.current?.click()}>
-              <Camera className="w-4 h-4 mr-2" />Ambil Foto
-            </Button>
-            <Button type="button" variant="outline" className="flex-1 h-11" onClick={() => fileInputRef.current?.click()}>
-              <ImageIcon className="w-4 h-4 mr-2" />Pilih Galeri
-            </Button>
-          </div>
-        ) : (
-          <div className="relative border rounded-xl overflow-hidden bg-gray-50">
-            <img src={receiptPreview} alt="Preview nota" className="w-full h-48 object-contain bg-white" />
-            <div className="absolute top-2 right-2 flex gap-2">
-              <Button type="button" size="icon" variant="secondary" className="h-8 w-8 rounded-full bg-white shadow" onClick={clearPhoto}><X className="w-4 h-4" /></Button>
-            </div>
-            <div className="p-2 bg-white border-t flex items-center justify-between">
-              <p className="text-xs text-gray-500 truncate">{receiptFile?.name} • {(receiptFile ? receiptFile.size/1024 : 0).toFixed(0)}KB</p>
-              <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()}>Ganti</Button>
-            </div>
-          </div>
-        )}
-        <p className="text-[11px] text-gray-400">Foto akan dikompres otomatis &lt;1MB. Format: JPG/PNG. Works on Android WebView + TWA.</p>
-      </div>
-
-      <div className="space-y-2"><Label className="text-sm">Keterangan</Label><textarea value={formData.description} onChange={(e) => setFormData((p:any)=>({...p, description: e.target.value}))} className="w-full px-3 py-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" rows={3} placeholder="Catatan tambahan..." /></div>
+      <div className="space-y-2"><Label className="text-sm">Keterangan</Label><textarea value={formData.description} onChange={(e) => setFormData((p:any)=>({...p, description: e.target.value}))} className="w-full px-3 py-3 text-base sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A3D5C]" rows={3} /></div>
     </div>
   );
 }
@@ -143,7 +46,6 @@ function AddExpenseForm({ formData, setFormData, properties, rooms, receiptFile,
 export function Expenses() {
   const isMobile = useIsMobile();
   const { can } = usePermissions();
-  const { user } = useAuth() as any;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -156,14 +58,10 @@ export function Expenses() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
 
   const canCreate = can('expenses.create');
   const canUpdate = can('expenses.update');
   const canDelete = can('expenses.delete');
-  const role = (user?.role || user?.globalRole || '').toLowerCase();
-  const isPenjaga = role.includes('penjaga');
 
   const [formData, setFormData] = useState({
     property_id: '', room_id: '', expense_type: 'electricity', provider_name: '', amount: 0,
@@ -224,9 +122,6 @@ export function Expenses() {
       property_id: properties[0]?.id || '', room_id: '', expense_type: 'electricity', provider_name: '', amount: 0,
       expense_date: new Date().toISOString().split('T')[0], description: '', approval_status: 'approved', reported_by: currentUser?.id || '',
     });
-    setReceiptFile(null);
-    if (receiptPreview) URL.revokeObjectURL(receiptPreview);
-    setReceiptPreview(null);
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -234,42 +129,15 @@ export function Expenses() {
     try {
       const currentUser = getUserFromToken();
       if (!currentUser?.id) { toast.error('Sesi tidak valid, silakan login ulang'); return; }
-      
-      // Step 8.3a: Use FormData if photo exists, otherwise JSON
-      if (receiptFile) {
-        const fd = new FormData();
-        fd.append('property_id', formData.property_id);
-        if (formData.room_id) fd.append('room_id', formData.room_id);
-        fd.append('expense_type', formData.expense_type);
-        fd.append('provider_name', formData.provider_name);
-        fd.append('amount', String(formData.amount));
-        fd.append('expense_date', formData.expense_date);
-        fd.append('description', formData.description);
-        fd.append('reported_by', currentUser.id);
-        fd.append('receipt', receiptFile);
-        
-        // Use fetch directly for multipart
-        const token = localStorage.getItem('kosana_token') || localStorage.getItem('kosana_access_token');
-        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://192.168.0.101:3001/api'}/expenses`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body: fd
-        });
-        if (!res.ok) throw new Error('Upload failed');
-      } else {
-        await expensesAPI.create({...formData, reported_by: currentUser.id});
-      }
-      
-      toast.success(isPenjaga ? 'Pengeluaran dicatat & otomatis disetujui' : 'Pengeluaran berhasil ditambahkan'); 
-      setIsAddDialogOpen(false); resetForm(); fetchData();
-    } catch (error) { console.error(error); toast.error('Gagal menambahkan pengeluaran'); }
+      await expensesAPI.create({...formData, reported_by: currentUser.id});
+      toast.success('Pengeluaran berhasil ditambahkan'); setIsAddDialogOpen(false); resetForm(); fetchData();
+    } catch (error) { toast.error('Gagal menambahkan pengeluaran'); }
   };
 
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!selectedExpense) return;
     try {
       const currentUser = getUserFromToken();
-      // For edit, keep JSON for now (photo update can be added similarly)
       await expensesAPI.update(selectedExpense.id, {...formData, reported_by: selectedExpense.reported_by || currentUser?.id || ''});
       toast.success('Pengeluaran berhasil diperbarui'); setIsEditDialogOpen(false); setSelectedExpense(null); fetchData();
     } catch (error) { toast.error('Gagal memperbarui pengeluaran'); }
@@ -284,12 +152,12 @@ export function Expenses() {
   return (
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Pengeluaran</h1><p className="text-sm sm:text-base text-gray-500">Catat dan kelola semua pengeluaran operasional {isPenjaga && '— foto nota otomatis terkompres'}</p></div>
+        <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">Pengeluaran</h1><p className="text-sm sm:text-base text-gray-500">Catat dan kelola semua pengeluaran operasional</p></div>
         {canCreate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] w-full sm:w-auto h-11 sm:h-10 shrink-0" onClick={() => { resetForm(); setIsAddDialogOpen(true); }}><Plus className="w-4 h-4 mr-2" />Tambah Pengeluaran</Button>)}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full">
-        <Card className="w-full overflow-hidden"><CardContent className="p-4 sm:p-5"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center shrink-0"><Receipt className="w-5 h-5 text-red-600" /></div><div className="min-w-0 flex-1"><p className="text-xs sm:text-sm text-gray-500">Total Pengeluaran</p><p className="text-lg sm:text-xl font-bold text-gray-900 truncate">{formatCurrency(totalExpenses)}</p><p className="text-[11px] text-gray-400">{filteredExpenses.length} transaksi</p></div></div></CardContent></Card>
+        <Card className="w-full overflow-hidden"><CardContent className="p-4 sm:p-5"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center shrink-0"><Receipt className="w-5 h-5 text-red-600" /></div><div className="min-w-0 flex-1"><p className="text-xs sm:text-sm text-gray-500">Total Pengeluaran</p><p className="text-lg sm:text-xl font-bold text-gray-900 truncate">{formatCurrency(totalExpenses)}</p></div></div></CardContent></Card>
         <Card className="w-full overflow-hidden"><CardContent className="p-4 sm:p-5"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center shrink-0"><Receipt className="w-5 h-5 text-orange-600" /></div><div className="min-w-0 flex-1"><p className="text-xs sm:text-sm text-gray-500">Pengeluaran Kamar</p><p className="text-lg sm:text-xl font-bold text-gray-900 truncate">{formatCurrency(roomExpenses)}</p></div></div></CardContent></Card>
         <Card className="w-full overflow-hidden"><CardContent className="p-4 sm:p-5"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center shrink-0"><Receipt className="w-5 h-5 text-blue-600" /></div><div className="min-w-0 flex-1"><p className="text-xs sm:text-sm text-gray-500">Pengeluaran Operasional</p><p className="text-lg sm:text-xl font-bold text-gray-900 truncate">{formatCurrency(overheadExpenses)}</p></div></div></CardContent></Card>
       </div>
@@ -310,15 +178,11 @@ export function Expenses() {
       {!isLoading && (
         <>
           <Card className="hidden sm:block w-full overflow-hidden">
-            <div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-50 border-b"><tr><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Tanggal</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kategori</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kamar</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Provider</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Keterangan</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Foto</th><th className="px-4 py-3 text-right text-sm font-medium text-gray-500">Jumlah</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Status</th></tr></thead>
+            <div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-50 border-b"><tr><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Tanggal</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kategori</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Kamar</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Provider</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Keterangan</th><th className="px-4 py-3 text-right text-sm font-medium text-gray-500">Jumlah</th><th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Status</th></tr></thead>
               <tbody className="divide-y">{filteredExpenses.map((expense) => {
                 const room = rooms.find(r => r.id === expense.room_id);
-                return (<tr key={expense.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedExpense(expense)}><td className="px-4 py-3">{formatDate(expense.expense_date)}</td><td className="px-4 py-3"><Badge variant="outline">{getExpenseTypeLabel(expense.expense_type)}</Badge></td><td className="px-4 py-3">{room? (<span>{room.room_number}</span>) : (<span className="text-gray-400">-</span>)}</td><td className="px-4 py-3">{expense.provider_name}</td><td className="px-4 py-3"><span className="text-sm text-gray-600 line-clamp-1">{expense.description || '-'}</span></td><td className="px-4 py-3">{(expense as any).receipt_image_url ? <img src={(expense as any).receipt_image_url} alt="nota" className="w-10 h-10 object-cover rounded border" /> : <span className="text-gray-300 text-xs">-</span>}</td><td className="px-4 py-3 text-right font-medium">{formatCurrency(expense.amount)}</td><td className="px-4 py-3"><Badge className={cn(expense.approval_status === 'approved' && "bg-green-100 text-green-700", expense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", expense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{expense.approval_status === 'approved'? 'Disetujui' : expense.approval_status === 'pending'? 'Menunggu' : 'Ditolak'}</Badge></td></tr>);
+                return (<tr key={expense.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedExpense(expense)}><td className="px-4 py-3">{formatDate(expense.expense_date)}</td><td className="px-4 py-3"><Badge variant="outline">{getExpenseTypeLabel(expense.expense_type)}</Badge></td><td className="px-4 py-3">{room? (<span>{room.room_number}</span>) : (<span className="text-gray-400">-</span>)}</td><td className="px-4 py-3">{expense.provider_name}</td><td className="px-4 py-3"><span className="text-sm text-gray-600 line-clamp-1">{expense.description || '-'}</span></td><td className="px-4 py-3 text-right font-medium">{formatCurrency(expense.amount)}</td><td className="px-4 py-3"><Badge className={cn(expense.approval_status === 'approved' && "bg-green-100 text-green-700", expense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", expense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{expense.approval_status === 'approved'? 'Disetujui' : expense.approval_status === 'pending'? 'Menunggu' : 'Ditolak'}</Badge></td></tr>);
               })}</tbody>
-              {/* Step 8: Total footer visible to all for P&L */}
-              <tfoot className="bg-[#1A3D5C] text-white">
-                <tr><td colSpan={6} className="px-4 py-3 text-right font-semibold text-sm">TOTAL PENGELUARAN ({filteredExpenses.length} transaksi)</td><td className="px-4 py-3 text-right font-bold text-base">{formatCurrency(totalExpenses)}</td><td className="px-4 py-3"></td></tr>
-              </tfoot>
             </table></div>
           </Card>
 
@@ -330,10 +194,7 @@ export function Expenses() {
                   <CardContent className="p-4">
                     <div className="flex justify-between items-start gap-2">
                       <div className="min-w-0 flex-1"><p className="font-medium text-gray-900 truncate">{expense.provider_name}</p><p className="text-xs text-gray-500 mt-0.5 flex items-center gap-2"><span>{formatDate(expense.expense_date)}</span><span>•</span><span>{getExpenseTypeLabel(expense.expense_type)}</span>{room && <><span>•</span><span>Kamar {room.room_number}</span></>}</p></div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {(expense as any).receipt_image_url && <img src={(expense as any).receipt_image_url} alt="nota" className="w-8 h-8 object-cover rounded border" />}
-                        <Badge className={cn("text-xs", expense.approval_status === 'approved' && "bg-green-100 text-green-700", expense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", expense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{expense.approval_status === 'approved'? '✓' : '...'}</Badge>
-                      </div>
+                      <Badge className={cn("shrink-0 text-xs", expense.approval_status === 'approved' && "bg-green-100 text-green-700", expense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", expense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{expense.approval_status === 'approved'? 'Disetujui' : expense.approval_status === 'pending'? 'Menunggu' : 'Ditolak'}</Badge>
                     </div>
                     <div className="mt-3 flex justify-between items-end gap-2">
                       <div className="min-w-0 flex-1"><p className="text-xs text-gray-500">Jumlah</p><p className="font-bold text-gray-900 truncate">{formatCurrency(expense.amount)}</p>{expense.description && <p className="text-xs text-gray-500 mt-1 truncate">{expense.description}</p>}</div>
@@ -343,33 +204,7 @@ export function Expenses() {
                 </Card>
               );
             })}
-            {/* Step 8: Mobile Total Footer - visible to all */}
-            <Card className="w-full overflow-hidden bg-[#1A3D5C] text-white border-0">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3"><div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center"><Calculator className="w-5 h-5" /></div><div><p className="text-xs text-blue-100">TOTAL PENGELUARAN</p><p className="text-[11px] text-blue-200">{filteredExpenses.length} transaksi • {selectedMonth !== 'all' ? formatMonthKey(selectedMonth) : 'Semua bulan'}</p></div></div>
-                  <div className="text-right"><p className="text-lg font-bold">{formatCurrency(totalExpenses)}</p><p className="text-[11px] text-blue-200">Untuk P&L: Revenue - Expenses - Maintenance</p></div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-white/10 rounded-lg p-2"><p className="text-blue-100">Kamar</p><p className="font-semibold">{formatCurrency(roomExpenses)}</p></div>
-                  <div className="bg-white/10 rounded-lg p-2"><p className="text-blue-100">Operasional</p><p className="font-semibold">{formatCurrency(overheadExpenses)}</p></div>
-                </div>
-              </CardContent>
-            </Card>
           </div>
-
-          {/* Desktop Total Footer outside table for extra visibility */}
-          <Card className="hidden sm:block w-full overflow-hidden bg-gradient-to-r from-[#1A3D5C] to-[#0F2744] text-white border-0 mt-4">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center"><TrendingDown className="w-6 h-6" /></div>
-                  <div><p className="text-sm text-blue-100 font-medium">TOTAL PENGELUARAN TERFILTER — Untuk Perhitungan P&L Bulanan</p><p className="text-xs text-blue-200 mt-1">Formula: <span className="font-mono bg-white/20 px-1.5 py-0.5 rounded">Net Profit = Revenue - {formatCurrency(totalExpenses)} (Expenses) - Maintenance</span> • {filteredExpenses.length} transaksi {selectedMonth !== 'all' ? `• ${formatMonthKey(selectedMonth)}` : ''} {selectedProperty !== 'all' ? `• ${properties.find(p=>p.id===selectedProperty)?.name}` : ''}</p></div>
-                </div>
-                <div className="text-right"><p className="text-2xl font-bold">{formatCurrency(totalExpenses)}</p><div className="flex gap-2 mt-1 justify-end text-[11px]"><span className="bg-white/20 px-2 py-0.5 rounded">Kamar: {formatCurrency(roomExpenses)}</span><span className="bg-white/20 px-2 py-0.5 rounded">Ops: {formatCurrency(overheadExpenses)}</span></div></div>
-              </div>
-            </CardContent>
-          </Card>
         </>
       )}
 
@@ -377,17 +212,17 @@ export function Expenses() {
 
       {isMobile? (
         <Sheet open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <SheetContent side="bottom" className="h-[92vh] w-full p-0 flex flex-col bg-white">
-            <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle>Tambah Pengeluaran</SheetTitle><SheetDescription>Catat pengeluaran baru — foto nota otomatis terkompres untuk Android</SheetDescription></SheetHeader>
+          <SheetContent side="bottom" className="h-[90vh] w-full p-0 flex flex-col bg-white">
+            <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle>Tambah Pengeluaran</SheetTitle><SheetDescription>Catat pengeluaran baru</SheetDescription></SheetHeader>
             <form onSubmit={handleAdd} className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-4 pb-[env(safe-area-inset-bottom)]"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} receiptFile={receiptFile} setReceiptFile={setReceiptFile} receiptPreview={receiptPreview} setReceiptPreview={setReceiptPreview} /></div>
+              <div className="flex-1 overflow-y-auto p-4 pb-[env(safe-area-inset-bottom)]"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} /></div>
               <SheetFooter className="p-4 border-t flex-row gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button type="button" variant="outline" className="flex-1 h-11" onClick={() => setIsAddDialogOpen(false)}>Batal</Button><Button type="submit" className="flex-1 bg-[#1A3D5C] hover:bg-[#0F2744] h-11">Simpan</Button></SheetFooter>
             </form>
           </SheetContent>
         </Sheet>
       ) : (
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>Tambah Pengeluaran</DialogTitle><DialogDescription>Catat pengeluaran baru dengan foto nota</DialogDescription></DialogHeader><form onSubmit={handleAdd} className="space-y-4"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} receiptFile={receiptFile} setReceiptFile={setReceiptFile} receiptPreview={receiptPreview} setReceiptPreview={setReceiptPreview} /><DialogFooter><Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Batal</Button><Button type="submit" className="bg-[#1A3D5C] hover:bg-[#0F2744]">Simpan</Button></DialogFooter></form></DialogContent>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>Tambah Pengeluaran</DialogTitle><DialogDescription>Catat pengeluaran baru</DialogDescription></DialogHeader><form onSubmit={handleAdd} className="space-y-4"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} /><DialogFooter><Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Batal</Button><Button type="submit" className="bg-[#1A3D5C] hover:bg-[#0F2744]">Simpan</Button></DialogFooter></form></DialogContent>
         </Dialog>
       )}
 
@@ -399,9 +234,6 @@ export function Expenses() {
                 <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle>Detail Pengeluaran</SheetTitle><SheetDescription>Informasi lengkap</SheetDescription></SheetHeader>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-[env(safe-area-inset-bottom)]">
                   <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl"><div className="min-w-0 flex-1"><p className="text-xs text-gray-500">Jumlah Pengeluaran</p><p className="text-xl font-bold text-gray-900 truncate">{formatCurrency(selectedExpense.amount)}</p></div><Badge className={cn("shrink-0 ml-2", selectedExpense.approval_status === 'approved' && "bg-green-100 text-green-700", selectedExpense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", selectedExpense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{selectedExpense.approval_status === 'approved'? 'Disetujui' : selectedExpense.approval_status === 'pending'? 'Menunggu' : 'Ditolak'}</Badge></div>
-                  {(selectedExpense as any).receipt_image_url && (
-                    <div className="space-y-2"><p className="text-xs font-semibold text-gray-400 uppercase">Foto Nota</p><img src={(selectedExpense as any).receipt_image_url} alt="Nota" className="w-full rounded-xl border max-h-64 object-contain bg-white" /></div>
-                  )}
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between gap-2"><span className="text-gray-500">Tanggal</span><span className="font-medium">{formatDate(selectedExpense.expense_date)}</span></div>
                     <div className="flex justify-between gap-2"><span className="text-gray-500">Kategori</span><Badge variant="outline" className="text-xs">{getExpenseTypeLabel(selectedExpense.expense_type)}</Badge></div>
@@ -415,6 +247,7 @@ export function Expenses() {
                   <Button variant="outline" className="h-11" onClick={() => setSelectedExpense(null)}>Tutup</Button>
                   {canDelete && (<Button variant="outline" className="text-red-600 h-11" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}
                   {canUpdate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744] h-11" onClick={() => { if (selectedExpense) { const exp=selectedExpense; setFormData({ property_id: exp.property_id, room_id: exp.room_id || '', expense_type: exp.expense_type, provider_name: exp.provider_name, amount: exp.amount, expense_date: new Date(exp.expense_date).toISOString().split('T')[0], description: exp.description || '', approval_status: exp.approval_status, reported_by: exp.reported_by || '', }); setIsEditDialogOpen(true); } }}><Edit className="w-4 h-4 mr-2" />Edit</Button>)}
+                  {!canUpdate && !canDelete && (<Button variant="outline" disabled className="h-11 col-span-2">Read-only</Button>)}
                 </div>
               </>
             )}
@@ -425,9 +258,7 @@ export function Expenses() {
           <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Detail Pengeluaran</DialogTitle><DialogDescription>Informasi lengkap</DialogDescription></DialogHeader>
             {selectedExpense && (
               <>
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Jumlah Pengeluaran</p><p className="text-2xl font-bold text-gray-900">{formatCurrency(selectedExpense.amount)}</p></div><Badge className={cn(selectedExpense.approval_status === 'approved' && "bg-green-100 text-green-700", selectedExpense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", selectedExpense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{selectedExpense.approval_status === 'approved'? 'Disetujui' : selectedExpense.approval_status === 'pending'? 'Menunggu' : 'Ditolak'}</Badge></div>
-                  {(selectedExpense as any).receipt_image_url && <img src={(selectedExpense as any).receipt_image_url} alt="Nota" className="w-full rounded-lg border max-h-64 object-contain" />}
+                <div className="space-y-4"><div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg"><div><p className="text-sm text-gray-500">Jumlah Pengeluaran</p><p className="text-2xl font-bold text-gray-900">{formatCurrency(selectedExpense.amount)}</p></div><Badge className={cn(selectedExpense.approval_status === 'approved' && "bg-green-100 text-green-700", selectedExpense.approval_status === 'pending' && "bg-yellow-100 text-yellow-700", selectedExpense.approval_status === 'rejected' && "bg-red-100 text-red-700")}>{selectedExpense.approval_status === 'approved'? 'Disetujui' : selectedExpense.approval_status === 'pending'? 'Menunggu' : 'Ditolak'}</Badge></div>
                 </div>
                 <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSelectedExpense(null)}>Tutup</Button>{canDelete && (<Button variant="outline" className="text-red-600" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="w-4 h-4 mr-2" />Hapus</Button>)}{canUpdate && (<Button className="bg-[#1A3D5C] hover:bg-[#0F2744]" onClick={() => { const exp=selectedExpense; setFormData({ property_id: exp.property_id, room_id: exp.room_id || '', expense_type: exp.expense_type, provider_name: exp.provider_name, amount: exp.amount, expense_date: new Date(exp.expense_date).toISOString().split('T')[0], description: exp.description || '', approval_status: exp.approval_status, reported_by: exp.reported_by || '', }); setIsEditDialogOpen(true); }}><Edit className="w-4 h-4 mr-2" />Edit</Button>)}</DialogFooter>
               </>
@@ -441,14 +272,14 @@ export function Expenses() {
           <SheetContent side="bottom" className="h-[90vh] w-full p-0 flex flex-col bg-white">
             <SheetHeader className="p-4 border-b shrink-0 text-left"><SheetTitle>Edit Pengeluaran</SheetTitle><SheetDescription>Perbarui informasi</SheetDescription></SheetHeader>
             <form onSubmit={handleEdit} className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-4 pb-[env(safe-area-inset-bottom)]"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} receiptFile={receiptFile} setReceiptFile={setReceiptFile} receiptPreview={receiptPreview} setReceiptPreview={setReceiptPreview} isEdit /></div>
+              <div className="flex-1 overflow-y-auto p-4 pb-[env(safe-area-inset-bottom)]"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} isEdit /></div>
               <SheetFooter className="p-4 border-t flex-row gap-3 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]"><Button type="button" variant="outline" className="flex-1 h-11" onClick={() => setIsEditDialogOpen(false)}>Batal</Button><Button type="submit" className="flex-1 bg-[#1A3D5C] hover:bg-[#0F2744] h-11">Simpan Perubahan</Button></SheetFooter>
             </form>
           </SheetContent>
         </Sheet>
       ) : (
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>Edit Pengeluaran</DialogTitle><DialogDescription>Perbarui informasi</DialogDescription></DialogHeader><form onSubmit={handleEdit} className="space-y-4"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} receiptFile={receiptFile} setReceiptFile={setReceiptFile} receiptPreview={receiptPreview} setReceiptPreview={setReceiptPreview} isEdit /><DialogFooter><Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>Batal</Button><Button type="submit" className="bg-[#1A3D5C] hover:bg-[#0F2744]">Simpan Perubahan</Button></DialogFooter></form></DialogContent>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>Edit Pengeluaran</DialogTitle><DialogDescription>Perbarui informasi</DialogDescription></DialogHeader><form onSubmit={handleEdit} className="space-y-4"><AddExpenseForm formData={formData} setFormData={setFormData} properties={properties} rooms={rooms} isEdit /><DialogFooter><Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>Batal</Button><Button type="submit" className="bg-[#1A3D5C] hover:bg-[#0F2744]">Simpan Perubahan</Button></DialogFooter></form></DialogContent>
         </Dialog>
       )}
 

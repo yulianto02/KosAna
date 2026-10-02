@@ -17,6 +17,11 @@ const {
 } = require('./middleware/auth');
 const jwt = require('jsonwebtoken');
 
+// Step 8.3b - For photo upload (future-proof for Android WebView / TWA)
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
 // Repositories
 const propertyRepository = require('./repositories/propertyRepository');
 const roomRepository = require('./repositories/roomRepository');
@@ -39,16 +44,62 @@ const PORT = process.env.PORT || 3001;
 app.use(cors({ origin: ['http://localhost:5173','http://192.168.0.101:5173','http://localhost:3000'], credentials: true }));
 app.use(express.json());
 
+// Step 8.3b - Serve uploaded receipts statically (for photo preview)
+const uploadsDir = path.join(__dirname, 'uploads', 'receipts');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Step 8.3b - Multer config for receipt_image_url (works with Android WebView file chooser + TWA)
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const name = Date.now() + '-' + file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+    cb(null, name);
+  }
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max for mobile photos
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only images allowed'), false);
+  }
+});
+
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 function getScope(req) { return { propertyIds: getAccessiblePropertyIds(req) }; }
 function assertPropertyInScope(propertyId, scope) { if (!propertyId) return true; if (scope.propertyIds.includes('*')) return true; return scope.propertyIds.includes(propertyId); }
 function isTukang(req) { const gr = req.user?.globalRole || req.user?.role; if (gr === 'tukang') return true; return (req.user?.propertyScopes || []).some(s => s.role === 'tukang'); }
 function getMaintenanceScope(req) { const base = getScope(req); if (isTukang(req)) { return { ...base, assignedTo: req.user.id }; } return base; }
 
+// Step 8 FIX: Allow OR logic for permissions (view OR create) - fixes 403 for penjaga on expenses & ac-cleaning
+function requireAnyPermission(...perms) {
+  return (req, res, next) => {
+    if (req.user?.isAdmin) return next();
+    const userPerms = req.user?.permissions || [];
+    // Also check wildcard
+    if (userPerms.includes('*')) return next();
+    const hasAny = perms.some(p => userPerms.includes(p));
+    if (!hasAny) {
+      return res.status(403).json({ error: `Forbidden: need one of ${perms.join(', ')}` });
+    }
+    next();
+  };
+}
+
+function isPenjaga(req) {
+  const gr = (req.user?.globalRole || req.user?.role || '').toLowerCase();
+  return gr.includes('penjaga') || gr === 'caretaker';
+}
+
 // Safe audit log - never crashes request if audit_logs schema differs
 async function safeAuditLog(data) {
   try {
-    // Try repo first if it exists
     if (auditLogRepo && typeof auditLogRepo.create === 'function') {
       await auditLogRepo.create(data);
       return;
@@ -56,10 +107,7 @@ async function safeAuditLog(data) {
   } catch (e) {
     console.warn('auditLogRepo.create failed, fallback:', e.message);
   }
-  // Fallback: try minimal insert that works with any schema
   try {
-    // Common columns: user_id, action, table_name/record_id OR entity_type/entity_id etc.
-    // Try most complete first
     await pool.query(`INSERT INTO audit_logs (user_id, action, table_name, record_id, new_data) VALUES ($1,$2,$3,$4,$5)`, [data.user_id, data.action, data.table_name || 'room_cleaning_schedule', data.record_id, data.new_data ? JSON.stringify(data.new_data) : null]);
   } catch (e1) {
     try {
@@ -141,36 +189,84 @@ app.put('/api/payments/:id', authenticateToken, requirePermission('payments.upda
 app.delete('/api/payments/:id', authenticateToken, requirePermission('payments.delete'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await paymentRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Payment not found' }); res.json({ message: 'Payment deleted' }); }));
 app.post('/api/payments/:id/mark-paid', authenticateToken, requirePermission('payments.update'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await paymentRepository.markAsPaid(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Payment not found' }); res.json(u); }));
 
-// EXPENSES
-app.get('/api/expenses', authenticateToken, requirePermission('expenses.view'), asyncHandler(async (req, res) => { const { propertyId, category, approval_status } = req.query; const scope = getScope(req); if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await expenseRepository.findAll({ property_id: propertyId, propertyId, category, approval_status, ...scope })); }));
-app.get('/api/expenses/:id', authenticateToken, requirePermission('expenses.view'), asyncHandler(async (req, res) => { const scope = getScope(req); const e = await expenseRepository.findById(req.params.id, scope); if (!e) return res.status(404).json({ error: 'Expense not found' }); res.json(e); }));
-app.post('/api/expenses', authenticateToken, requirePermission('expenses.create'), asyncHandler(async (req, res) => { const scope = getScope(req); res.status(201).json(await expenseRepository.create({ ...req.body, approval_status: 'pending' }, scope)); }));
+// EXPENSES - Step 8 FIXED: allow view OR create for penjaga, photo upload, auto-approved
+app.get('/api/expenses', authenticateToken, requireAnyPermission('expenses.view','expenses.read','expenses.create'), asyncHandler(async (req, res) => { 
+  const { propertyId, category, approval_status } = req.query; 
+  const scope = getScope(req); 
+  if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); 
+  res.json(await expenseRepository.findAll({ property_id: propertyId, propertyId, category, approval_status, ...scope })); 
+}));
+
+app.get('/api/expenses/:id', authenticateToken, requireAnyPermission('expenses.view','expenses.read','expenses.create'), asyncHandler(async (req, res) => { 
+  const scope = getScope(req); 
+  const e = await expenseRepository.findById(req.params.id, scope); 
+  if (!e) return res.status(404).json({ error: 'Expense not found' }); 
+  res.json(e); 
+}));
+
+// Step 8: POST with photo upload - future-proof for Android WebView/TWA
+app.post('/api/expenses', authenticateToken, requireAnyPermission('expenses.create','expenses.view'), upload.single('receipt'), asyncHandler(async (req, res) => { 
+  const scope = getScope(req);
+  
+  // Determine file URL from multer or from body (for base64/URL fallback)
+  let fileUrl = null;
+  if (req.file) {
+    fileUrl = `/uploads/receipts/${req.file.filename}`;
+  } else if (req.body.receipt_image_url) {
+    fileUrl = req.body.receipt_image_url;
+  }
+
+  // Step 8: penjaga expenses auto-approved, no approval workflow
+  const isPenjagaUser = isPenjaga(req);
+  const approvalStatus = isPenjagaUser ? 'approved' : (req.body.approval_status || 'pending');
+  const approvedBy = isPenjagaUser ? req.user.id : null;
+
+  // Build expense data - handle both JSON and multipart
+  const expenseData = {
+    property_id: req.body.property_id || req.body.propertyId,
+    room_id: req.body.room_id || req.body.roomId || null,
+    expense_date: req.body.expense_date || req.body.expenseDate,
+    expense_type: req.body.expense_type || req.body.expenseType || req.body.category,
+    amount: req.body.amount,
+    provider_name: req.body.provider_name || req.body.providerName || req.body.provider || 'Penjaga',
+    description: req.body.description || '',
+    receipt_image_url: fileUrl,
+    approval_status: approvalStatus,
+    approved_by: approvedBy,
+    reported_by: req.user.id
+  };
+
+  // Validate property scope
+  if (expenseData.property_id && !assertPropertyInScope(expenseData.property_id, scope)) {
+    return res.status(404).json({ error: 'Property not found' });
+  }
+
+  const created = await expenseRepository.create(expenseData, scope);
+  res.status(201).json(created); 
+}));
+
 app.put('/api/expenses/:id', authenticateToken, requirePermission('expenses.update'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await expenseRepository.update(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Expense not found' }); res.json(u); }));
 app.delete('/api/expenses/:id', authenticateToken, requirePermission('expenses.delete'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await expenseRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Expense not found' }); res.json({ message: 'Expense deleted' }); }));
 app.post('/api/expenses/:id/approve', authenticateToken, requirePermission('expenses.approve'), asyncHandler(async (req, res) => { const { approvedBy } = req.body; const scope = getScope(req); const u = await expenseRepository.approve(req.params.id, approvedBy, scope); if (!u) return res.status(404).json({ error: 'Expense not found' }); res.json(u); }));
 app.post('/api/expenses/:id/reject', authenticateToken, requirePermission('expenses.approve'), asyncHandler(async (req, res) => { const { approvedBy } = req.body; const scope = getScope(req); const u = await expenseRepository.reject(req.params.id, approvedBy, scope); if (!u) return res.status(404).json({ error: 'Expense not found' }); res.json(u); }));
 
 // ==================== ROOM CLEANING - FIXED ORDER ====================
-// FIX 1: Specific GET routes MUST come BEFORE /:id, otherwise Express matches "stats" as id="stats" -> 404/500
-app.get('/api/room-cleaning', authenticateToken, requirePermission('room_cleaning.view'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.query; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart are required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await roomCleaningRepo.findByPropertyAndWeek(propertyId, weekStart, scope)); }));
+app.get('/api/room-cleaning', authenticateToken, requireAnyPermission('room_cleaning.view','room_cleaning.read','room_cleaning.schedule','room_cleaning.create'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.query; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart are required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await roomCleaningRepo.findByPropertyAndWeek(propertyId, weekStart, scope)); }));
 
-app.get('/api/room-cleaning/stats', authenticateToken, requirePermission('room_cleaning.view'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.query; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); try { const stats = await roomCleaningRepo.getStats(propertyId, weekStart, scope); res.json(stats); } catch(e){ console.error('stats error', e); res.json({ scheduled:0, in_progress:0, completed:0, skipped:0, total:0 }); } }));
+app.get('/api/room-cleaning/stats', authenticateToken, requireAnyPermission('room_cleaning.view','room_cleaning.read','room_cleaning.schedule'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.query; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); try { const stats = await roomCleaningRepo.getStats(propertyId, weekStart, scope); res.json(stats); } catch(e){ console.error('stats error', e); res.json({ scheduled:0, in_progress:0, completed:0, skipped:0, total:0 }); } }));
 
-app.get('/api/room-cleaning/slots', authenticateToken, requirePermission('room_cleaning.view'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.query; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await roomCleaningRepo.getAvailableSlots(propertyId, weekStart, scope)); }));
+app.get('/api/room-cleaning/slots', authenticateToken, requireAnyPermission('room_cleaning.view','room_cleaning.read','room_cleaning.schedule'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.query; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await roomCleaningRepo.getAvailableSlots(propertyId, weekStart, scope)); }));
 
-app.get('/api/room-cleaning/room/:roomId/history', authenticateToken, requirePermission('room_cleaning.view'), asyncHandler(async (req, res) => { const scope = getScope(req); res.json(await roomCleaningRepo.getRoomHistory(req.params.roomId, 10, scope)); }));
+app.get('/api/room-cleaning/room/:roomId/history', authenticateToken, requireAnyPermission('room_cleaning.view','room_cleaning.read','room_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); res.json(await roomCleaningRepo.getRoomHistory(req.params.roomId, 10, scope)); }));
 
-// POST generate also before :id routes (good practice)
-app.post('/api/room-cleaning/generate', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.body; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); try { const count = await roomCleaningRepo.generateSchedule(propertyId, weekStart, scope); await safeAuditLog({ user_id: req.user.id, action: 'GENERATE_SCHEDULE', table_name: 'room_cleaning_schedule', record_id: propertyId }); res.json({ message: `${count} rooms scheduled`, count }); } catch(e){ if (e.message && e.message.includes('does not exist')) return res.json({ message: '0 rooms scheduled', count:0 }); throw e; } }));
+app.post('/api/room-cleaning/generate', authenticateToken, requireAnyPermission('room_cleaning.schedule','room_cleaning.create'), asyncHandler(async (req, res) => { const { propertyId, weekStart } = req.body; if (!propertyId || !weekStart) return res.status(400).json({ error: 'propertyId and weekStart required' }); const scope = getScope(req); if (!assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); try { const count = await roomCleaningRepo.generateSchedule(propertyId, weekStart, scope); await safeAuditLog({ user_id: req.user.id, action: 'GENERATE_SCHEDULE', table_name: 'room_cleaning_schedule', record_id: propertyId }); res.json({ message: `${count} rooms scheduled`, count }); } catch(e){ if (e.message && e.message.includes('does not exist')) return res.json({ message: '0 rooms scheduled', count:0 }); throw e; } }));
 
-// Now generic :id routes
-app.get('/api/room-cleaning/:id', authenticateToken, requirePermission('room_cleaning.view'), asyncHandler(async (req, res) => { 
-  // Guard: if someone still hits /stats via :id, return stats instead of 404
+app.get('/api/room-cleaning/:id', authenticateToken, requireAnyPermission('room_cleaning.view','room_cleaning.read','room_cleaning.schedule'), asyncHandler(async (req, res) => { 
   if (['stats','slots','generate'].includes(req.params.id)) return res.status(404).json({ error: 'Use /api/room-cleaning/stats instead of /:id' });
   const scope = getScope(req); const s = await roomCleaningRepo.findById(req.params.id, scope); if (!s) return res.status(404).json({ error: 'Schedule not found' }); res.json(s); 
 }));
 
-app.post('/api/room-cleaning', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => { 
+app.post('/api/room-cleaning', authenticateToken, requireAnyPermission('room_cleaning.schedule','room_cleaning.create'), asyncHandler(async (req, res) => { 
   const scope = getScope(req); 
   const pid = req.body.property_id || req.body.propertyId; 
   if (!pid) return res.status(400).json({ error: 'property_id required' });
@@ -179,7 +275,6 @@ app.post('/api/room-cleaning', authenticateToken, requirePermission('room_cleani
   property_id = property_id || pid;
   if (!room_id) return res.status(400).json({ error: 'room_id required' });
   if (week_start_date == null || day_of_week == null || time_slot == null) return res.status(400).json({ error: 'week_start_date, day_of_week, time_slot required' });
-  // Compute scheduled_date if not provided
   if (!scheduled_date) {
     const weekStart = new Date(week_start_date);
     if (isNaN(weekStart.getTime())) return res.status(400).json({ error: 'Invalid week_start_date' });
@@ -202,36 +297,36 @@ app.post('/api/room-cleaning', authenticateToken, requirePermission('room_cleani
   }
 }));
 
-app.put('/api/room-cleaning/:id', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const updates = {...req.body}; if (updates.assigned_to === '' || updates.assigned_to === 'self') updates.assigned_to = null; const existing = await roomCleaningRepo.findById(req.params.id, scope); if (!existing) return res.status(404).json({ error: 'Schedule not found' }); if (updates.day_of_week !== undefined || updates.time_slot !== undefined) { const weekStart = new Date(existing.week_start_date); const dayOfWeek = updates.day_of_week !== undefined ? parseInt(updates.day_of_week) : existing.day_of_week; const timeSlot = updates.time_slot !== undefined ? parseInt(updates.time_slot) : existing.time_slot; const scheduledDate = new Date(weekStart); scheduledDate.setDate(weekStart.getDate() + dayOfWeek); const hour = timeSlot <= 3 ? 9 + (timeSlot - 1) : 13 + (timeSlot - 4); scheduledDate.setHours(hour, 0, 0, 0); updates.scheduled_date = scheduledDate.toISOString(); } try { const schedule = await roomCleaningRepo.update(req.params.id, updates, scope); await safeAuditLog({ user_id: req.user.id, action: 'UPDATE', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(schedule); } catch(e){ if (e.code==='23505') return res.status(409).json({ error:'Jadwal bentrok' }); throw e; } }));
-app.post('/api/room-cleaning/:id/start', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const s = await roomCleaningRepo.markInProgress(req.params.id, scope); if (!s) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'START', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(s); }));
-app.post('/api/room-cleaning/:id/complete', authenticateToken, requirePermission('room_cleaning.complete'), asyncHandler(async (req, res) => { const scope = getScope(req); const { notes, actual_duration } = req.body; const s = await roomCleaningRepo.complete(req.params.id, req.user.id, notes, actual_duration, scope); if (!s) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'COMPLETE', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(s); }));
-app.post('/api/room-cleaning/:id/skip', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const { reason } = req.body; const s = await roomCleaningRepo.skip(req.params.id, reason, scope); if (!s) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'SKIP', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(s); }));
-app.delete('/api/room-cleaning/:id', authenticateToken, requirePermission('room_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await roomCleaningRepo.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'DELETE', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json({ message: 'Schedule deleted' }); }));
+app.put('/api/room-cleaning/:id', authenticateToken, requireAnyPermission('room_cleaning.schedule','room_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const updates = {...req.body}; if (updates.assigned_to === '' || updates.assigned_to === 'self') updates.assigned_to = null; const existing = await roomCleaningRepo.findById(req.params.id, scope); if (!existing) return res.status(404).json({ error: 'Schedule not found' }); if (updates.day_of_week !== undefined || updates.time_slot !== undefined) { const weekStart = new Date(existing.week_start_date); const dayOfWeek = updates.day_of_week !== undefined ? parseInt(updates.day_of_week) : existing.day_of_week; const timeSlot = updates.time_slot !== undefined ? parseInt(updates.time_slot) : existing.time_slot; const scheduledDate = new Date(weekStart); scheduledDate.setDate(weekStart.getDate() + dayOfWeek); const hour = timeSlot <= 3 ? 9 + (timeSlot - 1) : 13 + (timeSlot - 4); scheduledDate.setHours(hour, 0, 0, 0); updates.scheduled_date = scheduledDate.toISOString(); } try { const schedule = await roomCleaningRepo.update(req.params.id, updates, scope); await safeAuditLog({ user_id: req.user.id, action: 'UPDATE', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(schedule); } catch(e){ if (e.code==='23505') return res.status(409).json({ error:'Jadwal bentrok' }); throw e; } }));
+app.post('/api/room-cleaning/:id/start', authenticateToken, requireAnyPermission('room_cleaning.schedule','room_cleaning.complete','room_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const s = await roomCleaningRepo.markInProgress(req.params.id, scope); if (!s) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'START', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(s); }));
+app.post('/api/room-cleaning/:id/complete', authenticateToken, requireAnyPermission('room_cleaning.complete','room_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const { notes, actual_duration } = req.body; const s = await roomCleaningRepo.complete(req.params.id, req.user.id, notes, actual_duration, scope); if (!s) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'COMPLETE', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(s); }));
+app.post('/api/room-cleaning/:id/skip', authenticateToken, requireAnyPermission('room_cleaning.schedule','room_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const { reason } = req.body; const s = await roomCleaningRepo.skip(req.params.id, reason, scope); if (!s) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'SKIP', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json(s); }));
+app.delete('/api/room-cleaning/:id', authenticateToken, requireAnyPermission('room_cleaning.schedule','room_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await roomCleaningRepo.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Schedule not found' }); await safeAuditLog({ user_id: req.user.id, action: 'DELETE', table_name: 'room_cleaning_schedule', record_id: req.params.id }); res.json({ message: 'Schedule deleted' }); }));
 
-// LAUNDRY
-app.get('/api/laundry', authenticateToken, requirePermission('laundry.view'), asyncHandler(async (req, res) => { const { status, propertyId, tenantId } = req.query; const scope = getScope(req); if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await laundryRepository.findAll({ status, propertyId, tenantId, ...scope })); }));
-app.get('/api/laundry/:id', authenticateToken, requirePermission('laundry.view'), asyncHandler(async (req, res) => { const scope = getScope(req); const o = await laundryRepository.findById(req.params.id, scope); if (!o) return res.status(404).json({ error: 'Laundry order not found' }); res.json(o); }));
-app.post('/api/laundry', authenticateToken, requirePermission('laundry.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const pid = req.body.property_id || req.body.propertyId; if (pid && !assertPropertyInScope(pid, scope)) return res.status(404).json({ error: 'Property not found' }); res.status(201).json(await laundryRepository.create({ ...req.body, status: 'pending' }, scope)); }));
-app.put('/api/laundry/:id', authenticateToken, requirePermission('laundry.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await laundryRepository.update(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Laundry order not found' }); res.json(u); }));
-app.delete('/api/laundry/:id', authenticateToken, requirePermission('laundry.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await laundryRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Laundry order not found' }); res.json({ message: 'Laundry order deleted' }); }));
-app.post('/api/laundry/:id/complete', authenticateToken, requirePermission('laundry.complete'), asyncHandler(async (req, res) => { const scope = getScope(req); const { completedBy } = req.body; const u = await laundryRepository.complete(req.params.id, completedBy, scope); if (!u) return res.status(404).json({ error: 'Laundry order not found' }); res.json(u); }));
+// LAUNDRY - Step 8 FIX: allow view OR create
+app.get('/api/laundry', authenticateToken, requireAnyPermission('laundry.view','laundry.read','laundry.create'), asyncHandler(async (req, res) => { const { status, propertyId, tenantId } = req.query; const scope = getScope(req); if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await laundryRepository.findAll({ status, propertyId, tenantId, ...scope })); }));
+app.get('/api/laundry/:id', authenticateToken, requireAnyPermission('laundry.view','laundry.read','laundry.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const o = await laundryRepository.findById(req.params.id, scope); if (!o) return res.status(404).json({ error: 'Laundry order not found' }); res.json(o); }));
+app.post('/api/laundry', authenticateToken, requireAnyPermission('laundry.create','laundry.view'), asyncHandler(async (req, res) => { const scope = getScope(req); const pid = req.body.property_id || req.body.propertyId; if (pid && !assertPropertyInScope(pid, scope)) return res.status(404).json({ error: 'Property not found' }); res.status(201).json(await laundryRepository.create({ ...req.body, status: 'pending' }, scope)); }));
+app.put('/api/laundry/:id', authenticateToken, requireAnyPermission('laundry.create','laundry.view'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await laundryRepository.update(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Laundry order not found' }); res.json(u); }));
+app.delete('/api/laundry/:id', authenticateToken, requireAnyPermission('laundry.create','laundry.view'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await laundryRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Laundry order not found' }); res.json({ message: 'Laundry order deleted' }); }));
+app.post('/api/laundry/:id/complete', authenticateToken, requireAnyPermission('laundry.complete','laundry.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const { completedBy } = req.body; const u = await laundryRepository.complete(req.params.id, completedBy, scope); if (!u) return res.status(404).json({ error: 'Laundry order not found' }); res.json(u); }));
 
-// MAINTENANCE
-app.get('/api/maintenance', authenticateToken, requirePermission('maintenance.view'), asyncHandler(async (req, res) => { const { status, propertyId } = req.query; const scope = getMaintenanceScope(req); if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await maintenanceRepository.findAll({ status, propertyId, ...scope })); }));
-app.get('/api/maintenance/:id', authenticateToken, requirePermission('maintenance.view'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const r = await maintenanceRepository.findById(req.params.id, scope); if (!r) return res.status(404).json({ error: 'Maintenance request not found' }); res.json(r); }));
-app.post('/api/maintenance', authenticateToken, requirePermission('maintenance.create'), asyncHandler(async (req, res) => { const scope = getScope(req); res.status(201).json(await maintenanceRepository.create({ ...req.body, status: 'reported', cost: 0 }, scope)); }));
-app.put('/api/maintenance/:id', authenticateToken, requirePermission('maintenance.update'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const u = await maintenanceRepository.update(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Maintenance request not found' }); res.json(u); }));
-app.delete('/api/maintenance/:id', authenticateToken, requirePermission('maintenance.delete'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const d = await maintenanceRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Maintenance request not found' }); res.json({ message: 'Maintenance request deleted' }); }));
-app.post('/api/maintenance/:id/complete', authenticateToken, requirePermission('maintenance.update'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const u = await maintenanceRepository.complete(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Maintenance request not found' }); res.json(u); }));
+// MAINTENANCE - Step 8 FIX: allow view OR create
+app.get('/api/maintenance', authenticateToken, requireAnyPermission('maintenance.view','maintenance.read','maintenance.create'), asyncHandler(async (req, res) => { const { status, propertyId } = req.query; const scope = getMaintenanceScope(req); if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await maintenanceRepository.findAll({ status, propertyId, ...scope })); }));
+app.get('/api/maintenance/:id', authenticateToken, requireAnyPermission('maintenance.view','maintenance.read','maintenance.create'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const r = await maintenanceRepository.findById(req.params.id, scope); if (!r) return res.status(404).json({ error: 'Maintenance request not found' }); res.json(r); }));
+app.post('/api/maintenance', authenticateToken, requireAnyPermission('maintenance.create','maintenance.view'), asyncHandler(async (req, res) => { const scope = getScope(req); res.status(201).json(await maintenanceRepository.create({ ...req.body, status: 'reported', cost: 0 }, scope)); }));
+app.put('/api/maintenance/:id', authenticateToken, requireAnyPermission('maintenance.update','maintenance.create'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const u = await maintenanceRepository.update(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Maintenance request not found' }); res.json(u); }));
+app.delete('/api/maintenance/:id', authenticateToken, requireAnyPermission('maintenance.delete','maintenance.create'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const d = await maintenanceRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'Maintenance request not found' }); res.json({ message: 'Maintenance request deleted' }); }));
+app.post('/api/maintenance/:id/complete', authenticateToken, requireAnyPermission('maintenance.update','maintenance.create'), asyncHandler(async (req, res) => { const scope = getMaintenanceScope(req); const u = await maintenanceRepository.complete(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'Maintenance request not found' }); res.json(u); }));
 app.post('/api/maintenance/:id/assign', authenticateToken, requirePermission('maintenance.update'), asyncHandler(async (req, res) => { const { assignedTo } = req.body; const scope = getScope(req); const u = await maintenanceRepository.assign(req.params.id, assignedTo, scope); if (!u) return res.status(404).json({ error: 'Maintenance request not found' }); res.json(u); }));
 
-// AC CLEANING
-app.get('/api/ac-cleaning', authenticateToken, requirePermission('ac_cleaning.view'), asyncHandler(async (req, res) => { const { status, propertyId } = req.query; const scope = getScope(req); if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await acCleaningRepository.findAll({ status, propertyId, ...scope })); }));
-app.get('/api/ac-cleaning/:id', authenticateToken, requirePermission('ac_cleaning.view'), asyncHandler(async (req, res) => { const scope = getScope(req); const s = await acCleaningRepository.findById(req.params.id, scope); if (!s) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json(s); }));
-app.post('/api/ac-cleaning', authenticateToken, requirePermission('ac_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const pid = req.body.property_id || req.body.propertyId; if (pid && !assertPropertyInScope(pid, scope)) return res.status(404).json({ error: 'Property not found' }); res.status(201).json(await acCleaningRepository.create({ ...req.body, status: 'pending' }, scope)); }));
-app.put('/api/ac-cleaning/:id', authenticateToken, requirePermission('ac_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await acCleaningRepository.update(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json(u); }));
-app.delete('/api/ac-cleaning/:id', authenticateToken, requirePermission('ac_cleaning.schedule'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await acCleaningRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json({ message: 'AC cleaning schedule deleted' }); }));
-app.post('/api/ac-cleaning/:id/complete', authenticateToken, requirePermission('ac_cleaning.complete'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await acCleaningRepository.complete(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json(u); }));
+// AC CLEANING - Step 8 FIXED: allow view OR schedule/create for penjaga
+app.get('/api/ac-cleaning', authenticateToken, requireAnyPermission('ac_cleaning.view','ac_cleaning.read','ac_cleaning.schedule','ac_cleaning.create','ac_cleaning.complete'), asyncHandler(async (req, res) => { const { status, propertyId } = req.query; const scope = getScope(req); if (propertyId && !assertPropertyInScope(propertyId, scope)) return res.status(404).json({ error: 'Property not found' }); res.json(await acCleaningRepository.findAll({ status, propertyId, ...scope })); }));
+app.get('/api/ac-cleaning/:id', authenticateToken, requireAnyPermission('ac_cleaning.view','ac_cleaning.read','ac_cleaning.schedule','ac_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const s = await acCleaningRepository.findById(req.params.id, scope); if (!s) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json(s); }));
+app.post('/api/ac-cleaning', authenticateToken, requireAnyPermission('ac_cleaning.schedule','ac_cleaning.create','ac_cleaning.view'), asyncHandler(async (req, res) => { const scope = getScope(req); const pid = req.body.property_id || req.body.propertyId; if (pid && !assertPropertyInScope(pid, scope)) return res.status(404).json({ error: 'Property not found' }); res.status(201).json(await acCleaningRepository.create({ ...req.body, status: 'pending' }, scope)); }));
+app.put('/api/ac-cleaning/:id', authenticateToken, requireAnyPermission('ac_cleaning.schedule','ac_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await acCleaningRepository.update(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json(u); }));
+app.delete('/api/ac-cleaning/:id', authenticateToken, requireAnyPermission('ac_cleaning.schedule','ac_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const d = await acCleaningRepository.delete(req.params.id, scope); if (!d) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json({ message: 'AC cleaning schedule deleted' }); }));
+app.post('/api/ac-cleaning/:id/complete', authenticateToken, requireAnyPermission('ac_cleaning.complete','ac_cleaning.schedule','ac_cleaning.create'), asyncHandler(async (req, res) => { const scope = getScope(req); const u = await acCleaningRepository.complete(req.params.id, req.body, scope); if (!u) return res.status(404).json({ error: 'AC cleaning schedule not found' }); res.json(u); }));
 
 // NOTIFICATIONS
 app.get('/api/notifications', authenticateToken, asyncHandler(async (req, res) => { const { userId, unreadOnly } = req.query; if (req.user.isAdmin) { if (userId) { return res.json(await notificationRepository.findByUserId(userId, unreadOnly === 'true')); } return res.json(await notificationRepository.findAll()); } res.json(await notificationRepository.findByUserId(req.user.id, unreadOnly === 'true')); }));
@@ -277,5 +372,5 @@ app.get('/api/audit-logs', authenticateToken, requirePermission('audit_logs.view
 
 app.use((err, req, res, next) => { console.error('Error:', err); res.status(err.status || 500).json({ error: err.message || 'Internal server error', stack: process.env.NODE_ENV === 'development' ? err.stack : undefined }); });
 app.use((req, res) => { res.status(404).json({ error: 'Endpoint not found' }); });
-app.listen(PORT, '0.0.0.0', () => { console.log(`🚀 Kos Ana API Server running on port ${PORT}`); console.log(`💾 Database: PostgreSQL - Step 6 fixed room-cleaning order + safe audit`); });
+app.listen(PORT, '0.0.0.0', () => { console.log(`🚀 Kos Ana API Server running on port ${PORT}`); console.log(`💾 Database: PostgreSQL - Step 8 FIXED Expenses + AC Cleaning for penjaga + photo upload ready for Android WebView/TWA`); });
 module.exports = app;

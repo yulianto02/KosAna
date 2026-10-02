@@ -1,94 +1,65 @@
-import React, { useEffect, useState } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
-import { isAuthenticated, getCurrentUser } from '@/services/auth';
+// app/src/components/ProtectedRoute.tsx - Step 8 FIX: Support array permissions + OR logic for penjaga
+import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { ReactNode } from 'react';
 
 interface ProtectedRouteProps {
-  children: React.ReactNode;
-  requiredRole?: string[];
-  permission?: string;
+  children: ReactNode;
+  permission?: string | string[]; // Step 8: support array for penjaga (view OR create)
+  permissions?: string[]; // alternative prop name
+  requireAdmin?: boolean;
 }
 
-export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requiredRole, permission }) => {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isAuthorized, setIsAuthorized] = useState(false);
-  const [hasPerm, setHasPerm] = useState(true);
-  const location = useLocation();
-  let authCtx: any = null;
-  try { authCtx = useAuth(); } catch { authCtx = null; }
+export function ProtectedRoute({ children, permission, permissions, requireAdmin = false }: ProtectedRouteProps) {
+  const { hasPermission, isAdmin, user, loading } = useAuth() as any;
 
-  useEffect(() => {
-    const checkAuth = async () => {
-      if (!isAuthenticated()) {
-        setIsAuthorized(false);
-        setIsLoading(false);
-        return;
-      }
-      try {
-        const user: any = await getCurrentUser();
-        if (!user) {
-          // Fallback to authCtx user
-          if (authCtx?.user) {
-            setIsAuthorized(true);
-            setIsLoading(false);
-            return;
-          }
-          setIsAuthorized(false);
-          setIsLoading(false);
-          return;
-        }
-        if (requiredRole) {
-          const roleOk = requiredRole.includes(user.role) || requiredRole.includes(user.globalRole) || user.isAdmin;
-          if (!roleOk) {
-            setIsAuthorized(false);
-            setIsLoading(false);
-            return;
-          }
-        }
-        if (permission) {
-          // Admin bypass
-          if (user.isAdmin || user.permissions?.includes('*')) {
-            setHasPerm(true);
-          } else {
-            // Use context hasPermission if available (more accurate for penjaga)
-            if (authCtx?.hasPermission) {
-              // Special handling: penjaga has no dashboard.view, but should see dashboard
-              if (permission === 'dashboard.view' && (user.globalRole === 'penjaga' || user.role === 'penjaga')) {
-                setHasPerm(true);
-              } else {
-                setHasPerm(authCtx.hasPermission(permission));
-              }
-            } else {
-              const perms = user.permissions || [];
-              // penjaga's permissions are like properties.read, not properties.view
-              const altPerm = permission.includes('.view') ? permission.replace('.view', '.read') : permission.replace('.read', '.view');
-              const ok = perms.includes(permission) || perms.includes(altPerm) || perms.includes('*') || (permission === 'dashboard.view'); // allow dashboard for all logged in
-              setHasPerm(ok);
-            }
-          }
-        }
-        setIsAuthorized(true);
-      } catch (e) {
-        console.error('ProtectedRoute check failed', e);
-        // If authCtx has user, still allow
-        if (authCtx?.user) setIsAuthorized(true);
-        else setIsAuthorized(false);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    checkAuth();
-  }, [requiredRole, permission, authCtx?.user]);
-
-  if (isLoading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
-  if (!isAuthorized) return <Navigate to="/login" replace />;
-  if (permission && !hasPerm) {
-    // Don't redirect penjaga from dashboard, show empty message instead of infinite loop
-    if (location.pathname === '/dashboard' || permission === 'dashboard.view') {
-      return <>{children}</>;
-    }
-    console.warn(`[ProtectedRoute] No permission ${permission} for user, redirecting to /dashboard`);
-    return <Navigate to="/dashboard" replace state={{ from: location, noPermission: permission }} />;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin w-8 h-8 border-2 border-[#1A3D5C] border-t-transparent rounded-full" />
+      </div>
+    );
   }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (requireAdmin && !isAdmin) {
+    console.warn('[ProtectedRoute] Admin required, redirecting to /dashboard');
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // Step 8: Build list of required permissions (support both props)
+  const requiredList: string[] = [];
+  if (permission) {
+    if (Array.isArray(permission)) requiredList.push(...permission);
+    else requiredList.push(permission);
+  }
+  if (permissions) {
+    requiredList.push(...permissions);
+  }
+
+  if (requiredList.length > 0) {
+    // OR logic: allow if user has ANY of the listed permissions
+    // This allows penjaga with expenses.create to access expenses page that requires view
+    const hasAny = requiredList.some(p => hasPermission(p));
+    
+    if (!hasAny) {
+      // Special future-proof mapping for penjaga:
+      // expenses.view <-> expenses.create, ac_cleaning.view <-> ac_cleaning.schedule/create, etc.
+      const role = (user?.role || user?.globalRole || '').toLowerCase();
+      const isPenjaga = role.includes('penjaga');
+      
+      console.warn(`[ProtectedRoute] No permission ${requiredList.join(' OR ')} for user ${user?.username} (${role}), redirecting to /dashboard`);
+      
+      // For penjaga, redirect to first allowed page, not dashboard (which he doesn't have)
+      if (isPenjaga) {
+        return <Navigate to="/properties" replace />;
+      }
+      return <Navigate to="/dashboard" replace />;
+    }
+  }
+
   return <>{children}</>;
-};
+}

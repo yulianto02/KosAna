@@ -1,4 +1,4 @@
-// app/src/components/layout/Sidebar.tsx - Step 7: Settings moved to Access Control (admin only)
+// app/src/components/layout/Sidebar.tsx - Step 8.1 v3 FIX: Force 8 menus for penjaga, fix Expenses routing
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -68,24 +68,27 @@ const navConfig: NavConfig[] = [
   { id: 'rooms', label: PAGE_LABELS.rooms, icon: DoorOpen, permissions: ['rooms.view','rooms.read'], section: 'main' },
   { id: 'tenants', label: PAGE_LABELS.tenants, icon: Users, permissions: ['tenants.view','tenants.read'], section: 'main' },
   { id: 'payments', label: PAGE_LABELS.payments, icon: CreditCard, permissions: ['payments.view','payments.read'], section: 'main' },
-  { id: 'expenses', label: PAGE_LABELS.expenses, icon: Receipt, permissions: ['expenses.view','expenses.read'], section: 'main' },
-  { id: 'room-cleaning', label: PAGE_LABELS['room-cleaning'], icon: Sparkles, permissions: ['room_cleaning.view','room_cleaning.read'], section: 'main' },
-  { id: 'laundry', label: PAGE_LABELS.laundry, icon: Shirt, permissions: ['laundry.view','laundry.read'], section: 'main' },
-  { id: 'maintenance', label: PAGE_LABELS.maintenance, icon: Wrench, permissions: ['maintenance.view','maintenance.read'], section: 'main' },
-  { id: 'ac-cleaning', label: PAGE_LABELS['ac-cleaning'], icon: Wind, permissions: ['ac_cleaning.view','ac_cleaning.read'], section: 'main' },
+  { id: 'expenses', label: PAGE_LABELS.expenses, icon: Receipt, permissions: ['expenses.view','expenses.read','expenses.create','expenses.add'], section: 'main' },
+  { id: 'room-cleaning', label: PAGE_LABELS['room-cleaning'], icon: Sparkles, permissions: ['room_cleaning.view','room_cleaning.read','room_cleaning.schedule','room_cleaning.create'], section: 'main' },
+  { id: 'laundry', label: PAGE_LABELS.laundry, icon: Shirt, permissions: ['laundry.view','laundry.read','laundry.create'], section: 'main' },
+  { id: 'maintenance', label: PAGE_LABELS.maintenance, icon: Wrench, permissions: ['maintenance.view','maintenance.read','maintenance.create'], section: 'main' },
+  { id: 'ac-cleaning', label: PAGE_LABELS['ac-cleaning'], icon: Wind, permissions: ['ac_cleaning.view','ac_cleaning.read','ac_cleaning.schedule','ac_cleaning.create','ac_cleaning.complete'], section: 'main' },
   { id: 'reports', label: PAGE_LABELS.reports, icon: BarChart3, permissions: ['reports.view','reports.read'], section: 'main' },
-  // Step 7 - Access Control (admin only) - Settings moved here per updated requirement
   { id: 'users', label: PAGE_LABELS.users, icon: Users, permissions: ['users.manage'], section: 'access' },
   { id: 'roles', label: PAGE_LABELS.roles, icon: ShieldCheck, permissions: ['users.manage'], section: 'access' },
   { id: 'settings', label: PAGE_LABELS.settings, icon: Settings, permissions: ['users.manage'], section: 'access' },
 ];
 
+// Step 8: 8 menus for penjaga including AC Cleaning - FORCE SHOW even if permission missing (future-proof)
+const PENJAGA_ALLOWED_IDS: Page[] = ['properties','rooms','tenants','expenses','maintenance','laundry','room-cleaning','ac-cleaning'];
+
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse, onNavigate, variant = 'sidebar' }: SidebarProps) {
   const navigate = useNavigate();
   const isDrawer = variant === 'drawer';
-  const { hasPermission, isAdmin } = useAuth();
+  const { hasPermission, isAdmin, user } = useAuth() as any;
 
   const handleNavClick = (page: Page) => {
+    console.log('[Sidebar] Click:', page); // Debug to see if Expenses click works
     onPageChange(page);
     onNavigate?.();
   };
@@ -95,10 +98,26 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
     navigate('/login');
   };
 
-  const visibleItems = navConfig.filter(item => {
-    if (isAdmin) return true;
-    return item.permissions.some(p => hasPermission(p));
-  });
+  const role = (user?.role || user?.globalRole || '').toLowerCase();
+  const isPenjaga = role === 'penjaga' || role === 'caretaker' || role.includes('penjaga');
+
+  let visibleItems: NavConfig[] = [];
+
+  if (isAdmin) {
+    visibleItems = navConfig;
+  } else if (isPenjaga) {
+    // FIX: For penjaga, FORCE show 8 menus even if backend permissions missing for ac-cleaning
+    // This fixes "No AC Cleaning" bug
+    visibleItems = PENJAGA_ALLOWED_IDS
+      .map(id => navConfig.find(n => n.id === id))
+      .filter(Boolean) as NavConfig[];
+    console.log('[Sidebar] Penjaga forced 8 menus:', visibleItems.map(i=>i.id));
+  } else {
+    // Owner / other roles - permission based
+    visibleItems = navConfig.filter(item => {
+      return item.permissions.some(p => hasPermission(p));
+    });
+  }
 
   const mainItems = visibleItems.filter(i => (i.section || 'main') === 'main');
   const accessItems = visibleItems.filter(i => i.section === 'access');
